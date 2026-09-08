@@ -60,6 +60,10 @@
     <div class="eye-test"><div class="pupil-test" id="pupilR"></div></div>
   </div>
   <div id="status">Toca "Iniciar" para empezar.</div>
+  <div style="margin-top:10px;max-width:480px;width:100%;font-size:12px;color:#aaa;text-align:center;">
+    Prueba primero en vertical. Después gira el Redmi a horizontal con la cámara frontal a la izquierda.
+    La corrección X/Y se adapta automáticamente.
+  </div>
 
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/blazeface"></script>
@@ -104,7 +108,16 @@ async function start() {
     syncCanvasSize();
     video.addEventListener('resize', syncCanvasSize);          // cambia resolución real de la cámara
     window.addEventListener('resize', syncCanvasSize);          // gira el celular
-    window.addEventListener('orientationchange', syncCanvasSize);
+    window.addEventListener('orientationchange', () => {
+      // Esperamos un instante a que Android actualice el angle y el video.
+      setTimeout(syncCanvasSize, 100);
+    });
+
+    if (screen.orientation) {
+      screen.orientation.addEventListener('change', () => {
+        setTimeout(syncCanvasSize, 100);
+      });
+    }
 
     status.innerHTML = 'Cargando modelo de detección (una vez, con internet)...';
     model = await blazeface.load();
@@ -134,10 +147,66 @@ async function loop() {
     const cx = (x1 + x2) / 2;
     const cy = (y1 + y2) / 2;
 
-    // normalizado -1..1 respecto al centro del cuadro (esto es lo que
-    // eventualmente se le manda al ESP32 para mover los servos)
-    const nx = (cx / overlay.width) * 2 - 1;
-    const ny = (cy / overlay.height) * 2 - 1;
+    // ---------------------------------------------------------------
+    // MAPEO DE DIRECCIÓN
+    //
+    // La cámara frontal da una imagen tipo "espejo" respecto a lo que
+    // queremos para las pupilas. Por eso X se invierte.
+    //
+    // Además, al poner el Redmi horizontal, la cámara frontal queda
+    // físicamente a la IZQUIERDA. No basta con invertir X: hay que
+    // rotar las coordenadas según la orientación del teléfono.
+    //
+    // Convención final:
+    //   X -1 = izquierda del animatrónico
+    //   X +1 = derecha del animatrónico
+    //   Y -1 = arriba
+    //   Y +1 = abajo
+    // ---------------------------------------------------------------
+
+    const rawX = (cx / overlay.width) * 2 - 1;
+    const rawY = (cy / overlay.height) * 2 - 1;
+
+    function orientarCara(x, y) {
+      // screen.orientation.angle es más fiable en Android moderno.
+      // fallback a window.orientation para navegadores que todavía lo usan.
+      let angle = 0;
+
+      if (screen.orientation && typeof screen.orientation.angle === 'number') {
+        angle = screen.orientation.angle;
+      } else if (typeof window.orientation === 'number') {
+        angle = window.orientation;
+      }
+
+      angle = ((angle % 360) + 360) % 360;
+
+      let ox, oy;
+
+      if (angle === 90) {
+        // Teléfono horizontal con la cámara frontal físicamente a la
+        // izquierda: rotación de coordenadas + corrección de espejo.
+        ox = y;
+        oy = -x;
+      } else if (angle === 270) {
+        // Horizontal en el sentido contrario.
+        ox = -y;
+        oy = x;
+      } else {
+        // Vertical: solamente corregimos izquierda/derecha.
+        ox = -x;
+        oy = y;
+      }
+
+      return {
+        x: Math.max(-1, Math.min(1, ox)),
+        y: Math.max(-1, Math.min(1, oy))
+      };
+    }
+
+    const orientada = orientarCara(rawX, rawY);
+    const nx = orientada.x;
+    const ny = orientada.y;
+
     smoothX += (nx - smoothX) * SMOOTH;
     smoothY += (ny - smoothY) * SMOOTH;
 
@@ -154,7 +223,8 @@ async function loop() {
       x: <b>${smoothX.toFixed(2)}</b>&nbsp;&nbsp; y: <b>${smoothY.toFixed(2)}</b>
       &nbsp;&nbsp;(-1 = izquierda/arriba, 0 = centro, 1 = derecha/abajo)<br>
       confianza: <b>${(f.probability[0]*100).toFixed(0)}%</b>&nbsp;&nbsp;
-      FPS: <b>${fps}</b>
+      FPS: <b>${fps}</b><br>
+      orientación: <b>${(screen.orientation ? screen.orientation.angle : window.orientation || 0)}°</b>
     `;
 
     // mueve las pupilas de prueba — rango grande a propósito, para que sea obvio si funciona o no
