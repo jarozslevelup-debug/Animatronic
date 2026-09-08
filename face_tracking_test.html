@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Prueba de seguimiento facial</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #000; color: #0f8; font-family: 'Courier New', monospace;
+    display: flex; flex-direction: column; align-items: center;
+    min-height: 100vh; padding: 12px; overflow-x: hidden;
+  }
+  h1 { font-size: 14px; color: #0f8; margin-bottom: 8px; text-align: center; }
+  #wrap { position: relative; width: 100%; max-width: 480px; }
+  video, canvas {
+    width: 100%; border-radius: 8px; display: block;
+  }
+  canvas { position: absolute; top: 0; left: 0; }
+  #status {
+    margin-top: 10px; font-size: 13px; background: #0a0a0a;
+    border: 1px solid #0f8; border-radius: 6px; padding: 10px;
+    width: 100%; max-width: 480px; line-height: 1.7;
+  }
+  #status b { color: #fff; }
+  .warn { color: #ff0; }
+  .ok { color: #0f8; }
+  .bad { color: #f44; }
+  #startBtn {
+    margin-top: 12px; padding: 12px 24px; font-size: 15px;
+    background: #0f8; color: #000; border: none; border-radius: 6px;
+    font-weight: bold; cursor: pointer;
+  }
+  #eyes-test {
+    display: flex; gap: 24px; margin-top: 16px;
+  }
+  .eye-test {
+    width: 90px; height: 90px; border-radius: 50%;
+    background: #fff; position: relative; overflow: hidden;
+    border: 3px solid #0f8;
+  }
+  .pupil-test {
+    width: 36px; height: 36px; border-radius: 50%;
+    background: #111; position: absolute;
+    top: 50%; left: 50%;
+    margin-top: -18px; margin-left: -18px;
+    transition: transform 0.05s linear;
+  }
+</style>
+</head>
+<body>
+  <h1>PRUEBA DE SEGUIMIENTO FACIAL — FASE 1 (sin ESP32)</h1>
+  <div id="wrap">
+    <video id="video" autoplay playsinline muted></video>
+    <canvas id="overlay"></canvas>
+  </div>
+  <button id="startBtn">Iniciar cámara y detección</button>
+  <div id="eyes-test">
+    <div class="eye-test"><div class="pupil-test" id="pupilL"></div></div>
+    <div class="eye-test"><div class="pupil-test" id="pupilR"></div></div>
+  </div>
+  <div id="status">Toca "Iniciar" para empezar.</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/blazeface"></script>
+<script>
+const video = document.getElementById('video');
+const overlay = document.getElementById('overlay');
+const ctx = overlay.getContext('2d');
+const status = document.getElementById('status');
+const startBtn = document.getElementById('startBtn');
+
+let model = null;
+let lastFrameTime = performance.now();
+let fps = 0;
+let running = false;
+
+// suavizado simple para que el punto no tiemble frame a frame
+let smoothX = 0, smoothY = 0;
+const SMOOTH = 0.25;
+
+function syncCanvasSize() {
+  if (video.videoWidth && video.videoHeight) {
+    overlay.width = video.videoWidth;
+    overlay.height = video.videoHeight;
+  }
+}
+
+async function start() {
+  startBtn.disabled = true;
+  if (typeof blazeface === 'undefined' || typeof tf === 'undefined') {
+    status.innerHTML = '<span class="bad">No cargaron las librerías (revisa conexión a internet y recarga la página).</span>';
+    startBtn.disabled = false;
+    return;
+  }
+  status.innerHTML = 'Pidiendo permiso de cámara...';
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'user', width: { ideal: 320 }, height: { ideal: 240 } },
+      audio: false,
+    });
+    video.srcObject = stream;
+    await new Promise(r => video.onloadedmetadata = r);
+    syncCanvasSize();
+    video.addEventListener('resize', syncCanvasSize);          // cambia resolución real de la cámara
+    window.addEventListener('resize', syncCanvasSize);          // gira el celular
+    window.addEventListener('orientationchange', syncCanvasSize);
+
+    status.innerHTML = 'Cargando modelo de detección (una vez, con internet)...';
+    model = await blazeface.load();
+
+    status.innerHTML = '<span class="ok">Listo. Detectando...</span>';
+    running = true;
+    loop();
+  } catch (e) {
+    status.innerHTML = `<span class="bad">Error: ${e.message}</span><br>Revisa que diste permiso de cámara y que hay internet para el modelo la primera vez.`;
+    startBtn.disabled = false;
+  }
+}
+
+async function loop() {
+  if (!running) return;
+  const now = performance.now();
+  fps = Math.round(1000 / (now - lastFrameTime));
+  lastFrameTime = now;
+
+  const predictions = await model.estimateFaces(video, false);
+  ctx.clearRect(0, 0, overlay.width, overlay.height);
+
+  if (predictions.length > 0) {
+    const f = predictions[0];
+    const [x1, y1] = f.topLeft;
+    const [x2, y2] = f.bottomRight;
+    const cx = (x1 + x2) / 2;
+    const cy = (y1 + y2) / 2;
+
+    // normalizado -1..1 respecto al centro del cuadro (esto es lo que
+    // eventualmente se le manda al ESP32 para mover los servos)
+    const nx = (cx / overlay.width) * 2 - 1;
+    const ny = (cy / overlay.height) * 2 - 1;
+    smoothX += (nx - smoothX) * SMOOTH;
+    smoothY += (ny - smoothY) * SMOOTH;
+
+    ctx.strokeStyle = '#0f8';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
+    ctx.beginPath();
+    ctx.arc(cx, cy, 5, 0, Math.PI * 2);
+    ctx.fillStyle = '#0f8';
+    ctx.fill();
+
+    status.innerHTML = `
+      <span class="ok">CARA DETECTADA</span><br>
+      x: <b>${smoothX.toFixed(2)}</b>&nbsp;&nbsp; y: <b>${smoothY.toFixed(2)}</b>
+      &nbsp;&nbsp;(-1 = izquierda/arriba, 0 = centro, 1 = derecha/abajo)<br>
+      confianza: <b>${(f.probability[0]*100).toFixed(0)}%</b>&nbsp;&nbsp;
+      FPS: <b>${fps}</b>
+    `;
+
+    // mueve las pupilas de prueba — rango grande a propósito, para que sea obvio si funciona o no
+    const maxPupilOffset = 22; // px, el círculo del ojo mide 90px, el hueco libre es de sobra
+    const px = smoothX * maxPupilOffset;
+    const py = smoothY * maxPupilOffset;
+    document.getElementById('pupilL').style.transform = `translate(${px}px, ${py}px)`;
+    document.getElementById('pupilR').style.transform = `translate(${px}px, ${py}px)`;
+  } else {
+    status.innerHTML = `<span class="warn">Sin cara detectada</span> — FPS: <b>${fps}</b>`;
+  }
+
+  requestAnimationFrame(loop);
+}
+
+startBtn.addEventListener('click', start);
+</script>
+</body>
+</html>
