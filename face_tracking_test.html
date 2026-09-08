@@ -42,8 +42,8 @@
   <button id="startBtn">Iniciar cámara y detección</button>
   <div id="status">Toca "Iniciar" para empezar.</div>
 
-<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.11.0/dist/tf.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/blazeface@0.1.0/dist/blazeface.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/blazeface"></script>
 <script>
 const video = document.getElementById('video');
 const overlay = document.getElementById('overlay');
@@ -62,6 +62,11 @@ const SMOOTH = 0.25;
 
 async function start() {
   startBtn.disabled = true;
+  if (typeof blazeface === 'undefined' || typeof tf === 'undefined') {
+    status.innerHTML = '<span class="bad">No cargaron las librerías (revisa conexión a internet y recarga la página).</span>';
+    startBtn.disabled = false;
+    return;
+  }
   status.innerHTML = 'Pidiendo permiso de cámara...';
   try {
     const stream = await navigator.mediaDevices.getUserMedia({
