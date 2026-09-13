@@ -1,0 +1,916 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
+<title>Registro de ventas</title>
+<style>
+  :root{
+    --bg:#16120f; --bg-elev:#1e1712; --surface:#2a2119; --surface-2:#342a1f;
+    --border:#453a2c; --text:#f4ede2; --text-muted:#b3a58e;
+    --accent:#e2a33e; --accent-strong:#c98722; --accent-ink:#241505;
+    --manual:#d9654c; --manual-ink:#2a0f08; --ok:#7fae5b; --danger:#d9614c;
+    --radius:14px;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:var(--bg); color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    line-height:1.45; padding-bottom:170px; transition:background .2s,color .2s;
+  }
+  .wrap{max-width:480px;margin:0 auto;padding:16px;}
+  @media (min-width:680px){ .wrap{max-width:680px;} }
+  header{padding:14px 16px 6px;}
+  .header-row{display:flex;align-items:center;justify-content:space-between;gap:10px;}
+  .header-title{flex:1;text-align:center;}
+  .header-title h1{font-size:18px;font-weight:700;margin:0;letter-spacing:0.2px;}
+  .header-title p{font-size:12.5px;color:var(--text-muted);margin:3px 0 0;}
+  .icon-btn{
+    width:38px;height:38px;border-radius:50%;border:1px solid var(--border);
+    background:var(--surface);color:var(--text);font-size:17px;
+    display:flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;
+  }
+  .icon-btn.active{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);}
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:16px;margin-bottom:12px;}
+  .session-pill{display:flex;align-items:center;justify-content:space-between;gap:10px;}
+  .session-pill span{font-size:14px;font-weight:600;}
+  .session-row{display:flex;flex-direction:column;gap:12px;}
+  @media (min-width:520px){ .session-row{flex-direction:row;align-items:flex-end;} }
+  .field{flex:1;display:flex;flex-direction:column;gap:6px;}
+  label{font-size:12px;color:var(--text-muted);}
+  select,input[type=text],input[type=number],input[type=date],input[type=password]{
+    background:var(--surface-2); border:1px solid var(--border); color:var(--text);
+    border-radius:10px; padding:11px 12px; font-size:15px; width:100%;
+  }
+  select:focus,input:focus{outline:2px solid var(--accent);outline-offset:1px;}
+  .search-box{position:relative;}
+  .search-box input{font-size:17px;padding:14px 14px;}
+  .favoritos-row{display:flex;gap:8px;overflow-x:auto;padding:2px 0 10px;-webkit-overflow-scrolling:touch;}
+  .fav-chip{
+    flex-shrink:0;background:var(--surface-2);border:1px solid var(--border);color:var(--text);
+    border-radius:20px;padding:8px 14px;font-size:13px;white-space:nowrap;cursor:pointer;
+  }
+  .results{margin-top:8px;border-radius:var(--radius);overflow:hidden;border:1px solid var(--border);}
+  .result-item{
+    display:flex;align-items:center;gap:10px;padding:10px 12px;
+    background:var(--surface);border-bottom:1px solid var(--border);cursor:pointer;
+  }
+  .result-item:last-child{border-bottom:none;}
+  .result-item:active{background:var(--surface-2);}
+  .thumb{width:42px;height:42px;border-radius:9px;object-fit:cover;background:var(--surface-2);flex-shrink:0;}
+  .result-text{flex:1;min-width:0;}
+  .result-name{font-size:14.5px;display:block;}
+  .result-qty{font-size:12px;color:var(--text-muted);}
+  .star-btn{background:none;border:none;font-size:19px;color:var(--accent);cursor:pointer;padding:4px 6px;flex-shrink:0;}
+  .manual-link{display:block;text-align:center;padding:12px;color:var(--accent);font-size:13.5px;font-weight:600;cursor:pointer;}
+  .manual-hint{font-size:12px;color:var(--text-muted);margin-top:4px;}
+  .selected-title{font-size:15px;font-weight:700;margin:0;}
+  .selected-head{display:flex;align-items:center;gap:10px;}
+  .thumb-lg{width:56px;height:56px;border-radius:12px;object-fit:cover;background:var(--surface-2);flex-shrink:0;}
+  .badge{display:inline-block;font-size:11px;font-weight:700;padding:2px 8px;border-radius:20px;margin-left:8px;vertical-align:middle;}
+  .badge-manual{background:var(--manual);color:var(--manual-ink);}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+  .total-line{display:flex;justify-content:space-between;align-items:center;padding:10px 0 4px;font-size:14px;color:var(--text-muted);}
+  .total-line strong{color:var(--text);font-size:16px;}
+  button{font-family:inherit;font-size:15px;font-weight:600;border-radius:10px;border:none;padding:13px 16px;cursor:pointer;}
+  .btn-primary{background:var(--accent);color:var(--accent-ink);width:100%;margin-top:10px;}
+  .btn-primary:active{background:var(--accent-strong);}
+  .btn-secondary{background:var(--surface-2);color:var(--text);border:1px solid var(--border);}
+  .btn-ghost{background:transparent;color:var(--text-muted);border:1px solid var(--border);}
+  .btn-block{width:100%;}
+  .close-x{background:none;border:none;color:var(--text-muted);font-size:20px;padding:0 4px;cursor:pointer;line-height:1;}
+  .sale-row{display:flex;justify-content:space-between;align-items:flex-start;padding:11px 0;border-bottom:1px solid var(--border);gap:10px;}
+  .sale-row:last-child{border-bottom:none;}
+  .sale-left{display:flex;gap:10px;align-items:flex-start;min-width:0;}
+  .sale-name{font-size:14px;}
+  .sale-meta{font-size:12px;color:var(--text-muted);margin-top:2px;}
+  .sale-amount{font-size:14px;font-weight:700;white-space:nowrap;}
+  .empty-note{font-size:13px;color:var(--text-muted);text-align:center;padding:18px 8px;}
+  .footer-bar{position:fixed;bottom:0;left:0;right:0;background:var(--bg-elev);border-top:1px solid var(--border);padding:12px 16px calc(12px + env(safe-area-inset-bottom));}
+  .footer-inner{max-width:480px;margin:0 auto;}
+  @media (min-width:680px){ .footer-inner{max-width:680px;} }
+  .footer-total{display:flex;justify-content:space-between;font-size:14px;margin-bottom:8px;}
+  .footer-total strong{font-size:17px;}
+  .footer-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
+  .footer-actions-2{display:grid;grid-template-columns:1fr;gap:8px;margin-top:8px;}
+  .toast{position:fixed;left:50%;bottom:190px;transform:translateX(-50%);background:var(--ok);color:#0e1a08;font-size:13px;font-weight:600;padding:9px 16px;border-radius:20px;opacity:0;pointer-events:none;transition:opacity .2s;max-width:88%;text-align:center;z-index:60;}
+  .toast.show{opacity:1;}
+  .section-title{font-size:12px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;margin:18px 0 8px 4px;}
+  .config-warning{background:var(--surface);border:1px solid var(--manual);border-radius:var(--radius);padding:16px;font-size:13.5px;color:var(--text-muted);}
+  .config-warning code{background:var(--surface-2);padding:2px 5px;border-radius:5px;color:var(--accent);font-size:12.5px;}
+  .overlay{position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:100;padding:20px;}
+  .overlay-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:22px;max-width:340px;width:100%;}
+  .overlay-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;}
+  .overlay-header strong{font-size:16px;}
+  .field-row{display:flex;align-items:center;gap:8px;font-size:14px;margin-top:10px;}
+  .pin-title{font-size:16px;font-weight:700;margin:0 0 6px;text-align:center;}
+  .pin-sub{font-size:13px;color:var(--text-muted);text-align:center;margin:0 0 16px;}
+  .pin-error{font-size:12.5px;color:var(--danger);text-align:center;margin-top:8px;min-height:16px;}
+  .photo-btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;width:100%;margin-top:10px;cursor:pointer;}
+  .photo-preview{width:100%;max-height:220px;object-fit:cover;border-radius:10px;margin-top:10px;display:none;}
+  .catalog-hint{font-size:13px;color:var(--text-muted);text-align:center;padding:6px 8px 14px;}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header>
+    <div class="header-row">
+      <button class="icon-btn" id="btnCatalogMode" type="button" title="Modo catálogo">📷</button>
+      <div class="header-title">
+        <h1 id="appTitle">Registro de ventas</h1>
+        <p id="statusText">Cargando catálogo…</p>
+      </div>
+      <button class="icon-btn" id="btnOptions" type="button" title="Opciones">⚙️</button>
+    </div>
+  </header>
+
+  <div id="configWarning" style="display:none;" class="config-warning"></div>
+
+  <div id="mainApp" style="display:none;">
+
+    <div class="card" id="sessionCard">
+      <div class="session-pill" id="sessionPill">
+        <span id="sessionPillText">Canal · Vendedor</span>
+        <button class="icon-btn" id="sessionExpandBtn" type="button" title="Editar">✎</button>
+      </div>
+      <div class="session-row" id="sessionFields" style="display:none;">
+        <div class="field"><label for="canalSelect">Canal de venta</label><select id="canalSelect"></select></div>
+        <div class="field"><label for="vendedorInput">Vendedor</label><input type="text" id="vendedorInput" placeholder="Tu nombre"></div>
+        <button class="btn-secondary" id="sessionCollapseBtn" type="button">Listo</button>
+      </div>
+    </div>
+
+    <div id="ventaSection">
+      <div class="card">
+        <div class="favoritos-row" id="favoritosRow" style="display:none;"></div>
+        <div class="search-box">
+          <label for="searchInput">Buscar producto</label>
+          <input type="text" id="searchInput" placeholder="Ej. cable usb tipo c" autocomplete="off">
+        </div>
+        <div class="results" id="resultsList" style="display:none;"></div>
+        <div class="manual-link" id="manualLink">+ No está en la lista, registrar manual</div>
+      </div>
+
+      <div class="card" id="selectedCard" style="display:none;"></div>
+
+      <div class="section-title">Ventas de hoy</div>
+      <div class="card" id="todayCard">
+        <div class="empty-note" id="emptyNote">Aún no registras ninguna venta hoy.</div>
+        <div id="todayList"></div>
+      </div>
+    </div>
+
+    <div id="catalogSection" style="display:none;">
+      <p class="catalog-hint">Busca un producto y tócalo para fotografiarlo. La foto se descarga ya nombrada, lista para subir a <code>/images</code> en tu repositorio.</p>
+      <div class="card">
+        <div class="search-box">
+          <label for="searchInputCatalog">Buscar producto para fotografiar</label>
+          <input type="text" id="searchInputCatalog" placeholder="Ej. mascara halloween" autocomplete="off">
+        </div>
+        <div class="results" id="resultsListCatalog" style="display:none;"></div>
+      </div>
+      <div class="card" id="catalogCard" style="display:none;"></div>
+    </div>
+
+  </div>
+</div>
+
+<div class="footer-bar" id="footerBar" style="display:none;">
+  <div class="footer-inner">
+    <div class="footer-total">
+      <span id="footerCount">0 ventas</span>
+      <strong id="footerTotal">$0.00</strong>
+    </div>
+    <div class="footer-actions">
+      <button class="btn-secondary" id="btnCopyDatos">Copiar ventas (A–F)</button>
+      <button class="btn-secondary" id="btnCopySocio">Copiar socio (col J)</button>
+    </div>
+    <div class="footer-actions-2">
+      <button class="btn-primary btn-block" id="btnWhatsapp" style="margin-top:0;">Enviar por WhatsApp</button>
+      <button class="btn-ghost" id="btnClearDay">Vaciar lista del día</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<div class="overlay" id="pinOverlay" style="display:none;">
+  <div class="overlay-card">
+    <p class="pin-title">Acceso</p>
+    <p class="pin-sub">Escribe el PIN para entrar</p>
+    <input type="password" inputmode="numeric" id="pinInput" placeholder="••••" maxlength="8" style="text-align:center;font-size:20px;letter-spacing:4px;">
+    <button class="btn-primary" id="pinSubmit">Entrar</button>
+    <p class="pin-error" id="pinError"></p>
+  </div>
+</div>
+
+<div class="overlay" id="optionsOverlay" style="display:none;">
+  <div class="overlay-card">
+    <div class="overlay-header"><strong>Opciones</strong><button class="close-x" id="closeOptions">✕</button></div>
+    <div class="field">
+      <label for="themeSelect">Tema de color</label>
+      <select id="themeSelect"></select>
+    </div>
+    <div class="field-row">
+      <input type="checkbox" id="favToggle">
+      <label for="favToggle" style="font-size:14px;color:var(--text);">Mostrar favoritos arriba del buscador</label>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<script>
+/* ============================================================
+   CONFIGURACIÓN — esto es lo único que necesitas editar
+   ============================================================ */
+const CONFIG = {
+  appName: "Registro de ventas", // nombre visible arriba y en la pestaña del navegador (neutro a propósito)
+
+  // Pega aquí el link CSV publicado de tu pestaña "Compartir" (o Inventario):
+  csvUrl: "https://docs.google.com/spreadsheets/d/e/2PACX-1vQ1wAMwiRIx_RqQwIi0es1Lj1v_T17PQgP6amiR41W6SFnCItRobzyv2XFBofkZNVZldCepbUAplw9e/pub?gid=978870534&single=true&output=csv",
+
+  // Carpeta del repo donde vas subiendo las fotos de producto.
+  imagesFolder: "images/",
+
+  // PIN de acceso compartido (4 a 8 dígitos). Déjalo vacío ("") para desactivarlo.
+  pin: "0926",
+
+  // Tu número de WhatsApp con código de país, solo dígitos, sin +, sin espacios.
+  // Ejemplo México: "523312345678". Déjalo vacío para ocultar el botón.
+  whatsappNumber: "523317021170",
+
+  canales: ["Halloween","Dia de muertos","Tianguis","TianguisNav","Navidad","Facebook","Calle","Propio","Regalo","Merma"],
+
+  temaDefault: "oscuro",
+};
+
+/* ============================================================
+   TEMAS DE COLOR
+   ============================================================ */
+const THEMES = {
+  oscuro: { label:"Oscuro", vars:{
+    bg:"#16120f", bgElev:"#1e1712", surface:"#2a2119", surface2:"#342a1f", border:"#453a2c",
+    text:"#f4ede2", textMuted:"#b3a58e", accent:"#e2a33e", accentStrong:"#c98722", accentInk:"#241505",
+    manual:"#d9654c", manualInk:"#2a0f08", ok:"#7fae5b", danger:"#d9614c"
+  }},
+  azulElectrico: { label:"Azul eléctrico", vars:{
+    bg:"#0a1128", bgElev:"#0f1a3d", surface:"#132352", surface2:"#1a2f68", border:"#2c4489",
+    text:"#ffffff", textMuted:"#a9b8e0", accent:"#3d7fff", accentStrong:"#1f5fe0", accentInk:"#04102b",
+    manual:"#ff6b5c", manualInk:"#2a0803", ok:"#4fd17a", danger:"#ff6b5c"
+  }},
+  azulMarino: { label:"Azul marino", vars:{
+    bg:"#0d1b2a", bgElev:"#13263b", surface:"#1b3350", surface2:"#234064", border:"#2f5578",
+    text:"#eaf2fb", textMuted:"#8fa8c2", accent:"#6fb1ff", accentStrong:"#4a94e8", accentInk:"#04101c",
+    manual:"#ff8f6b", manualInk:"#2a0f06", ok:"#6fd19c", danger:"#ff6b6b"
+  }},
+  femenino: { label:"Femenino", vars:{
+    bg:"#fdf3f8", bgElev:"#fce8f1", surface:"#ffffff", surface2:"#f7e4ef", border:"#f0c9dd",
+    text:"#4a1f36", textMuted:"#9c6f88", accent:"#e8779e", accentStrong:"#d15c85", accentInk:"#ffffff",
+    manual:"#a463c9", manualInk:"#ffffff", ok:"#5a9e52", danger:"#d1596e"
+  }},
+  rojoBlanco: { label:"Blanco con rojo", vars:{
+    bg:"#ffffff", bgElev:"#fbfbfb", surface:"#f7f7f7", surface2:"#efefef", border:"#dedede",
+    text:"#241111", textMuted:"#8a7373", accent:"#d92b2b", accentStrong:"#b81f1f", accentInk:"#ffffff",
+    manual:"#c06a12", manualInk:"#ffffff", ok:"#3f9e52", danger:"#d92b2b"
+  }},
+  sol: { label:"Alto contraste (sol)", vars:{
+    bg:"#ffffff", bgElev:"#ffffff", surface:"#ffffff", surface2:"#f0f0f0", border:"#333333",
+    text:"#000000", textMuted:"#444444", accent:"#000000", accentStrong:"#222222", accentInk:"#ffffff",
+    manual:"#b30000", manualInk:"#ffffff", ok:"#0a7d2c", danger:"#b30000"
+  }},
+  bosque: { label:"Verde bosque", vars:{
+    bg:"#132118", bgElev:"#1b2e21", surface:"#22392a", surface2:"#2b4634", border:"#3c5c46",
+    text:"#f2ead9", textMuted:"#a9bfab", accent:"#8fbf6a", accentStrong:"#6fa04c", accentInk:"#132118",
+    manual:"#e0a458", manualInk:"#2b1a06", ok:"#8fbf6a", danger:"#d9614c"
+  }},
+};
+
+function applyTheme(key){
+  const theme = THEMES[key] ? key : CONFIG.temaDefault;
+  const v = THEMES[theme].vars;
+  const root = document.documentElement.style;
+  root.setProperty("--bg", v.bg);
+  root.setProperty("--bg-elev", v.bgElev);
+  root.setProperty("--surface", v.surface);
+  root.setProperty("--surface-2", v.surface2);
+  root.setProperty("--border", v.border);
+  root.setProperty("--text", v.text);
+  root.setProperty("--text-muted", v.textMuted);
+  root.setProperty("--accent", v.accent);
+  root.setProperty("--accent-strong", v.accentStrong);
+  root.setProperty("--accent-ink", v.accentInk);
+  root.setProperty("--manual", v.manual);
+  root.setProperty("--manual-ink", v.manualInk);
+  root.setProperty("--ok", v.ok);
+  root.setProperty("--danger", v.danger);
+  storageSet("rv_theme", theme);
+}
+
+/* ============================================================
+   Almacenamiento local (persistencia por celular)
+   ============================================================ */
+function storageGet(key, fallback){
+  try{
+    const raw = localStorage.getItem(key);
+    return raw === null ? fallback : JSON.parse(raw);
+  }catch(e){ return fallback; }
+}
+function storageSet(key, value){
+  try{ localStorage.setItem(key, JSON.stringify(value)); }catch(e){ /* modo privado o lleno: seguimos sin persistir */ }
+}
+
+/* ============================================================
+   Utilidades
+   ============================================================ */
+function normalize(str){
+  return String(str ?? "")
+    .normalize("NFD").replace(/[\u0300-\u036f]/g,"")
+    .toLowerCase().trim();
+}
+function slugify(str){
+  return normalize(str).replace(/[^a-z0-9]+/g,"-").replace(/^-+|-+$/g,"");
+}
+function money(n){
+  const v = Number(n) || 0;
+  return "$" + v.toFixed(2);
+}
+function todayISO(){ return new Date().toISOString().slice(0,10); }
+function uid(){ return Date.now().toString(36) + Math.random().toString(36).slice(2,6); }
+function escapeAttr(str){ return String(str).replace(/"/g,"&quot;"); }
+function showToast(msg){
+  const t = document.getElementById("toast");
+  t.textContent = msg;
+  t.classList.add("show");
+  setTimeout(()=>t.classList.remove("show"), 1800);
+}
+async function copyText(text){
+  try{ await navigator.clipboard.writeText(text); return true; }
+  catch(e){
+    const ta = document.createElement("textarea");
+    ta.value = text; ta.style.position="fixed"; ta.style.opacity="0";
+    document.body.appendChild(ta); ta.select();
+    let ok = false;
+    try{ ok = document.execCommand("copy"); }catch(err){ ok = false; }
+    document.body.removeChild(ta);
+    return ok;
+  }
+}
+function handleImgError(img){
+  if(img.dataset.tried === "jpg"){
+    img.dataset.tried = "png";
+    img.src = CONFIG.imagesFolder + img.dataset.slug + ".png";
+  } else {
+    img.style.display = "none";
+  }
+}
+window.handleImgError = handleImgError;
+
+/* ============================================================
+   Estado
+   ============================================================ */
+let products = [];
+let todaySales = storageGet("rv_today_sales", []);
+let favoritos = storageGet("rv_favoritos", []);
+let currentSelection = null;
+let pendingManualPhoto = null; // dataURL comprimido, solo para vista de esta sesión
+let appMode = "venta"; // "venta" | "catalogo"
+
+/* ============================================================
+   PIN de acceso
+   ============================================================ */
+function needsPin(){
+  return CONFIG.pin && CONFIG.pin.trim() !== "" && storageGet("rv_pin_ok", false) !== true;
+}
+function showPinGate(){
+  document.getElementById("pinOverlay").style.display = "flex";
+  document.getElementById("pinSubmit").addEventListener("click", tryPin);
+  document.getElementById("pinInput").addEventListener("keydown", (e)=>{ if(e.key==="Enter") tryPin(); });
+}
+function tryPin(){
+  const val = document.getElementById("pinInput").value.trim();
+  if(val === CONFIG.pin){
+    storageSet("rv_pin_ok", true);
+    document.getElementById("pinOverlay").style.display = "none";
+    startApp();
+  } else {
+    document.getElementById("pinError").textContent = "PIN incorrecto";
+    document.getElementById("pinInput").value = "";
+  }
+}
+
+/* ============================================================
+   Arranque
+   ============================================================ */
+function boot(){
+  const theme = storageGet("rv_theme", CONFIG.temaDefault);
+  applyTheme(theme);
+  document.getElementById("appTitle").textContent = CONFIG.appName;
+  document.title = CONFIG.appName;
+  setupThemeSelect(theme);
+  setupOptionsPanel();
+  setupCatalogModeToggle();
+
+  if(needsPin()){ showPinGate(); }
+  else { startApp(); }
+}
+
+function startApp(){
+  initSessionDefaults();
+  loadInventory();
+  renderToday();
+  renderFavoritosRow();
+}
+
+/* ============================================================
+   Opciones (tema + favoritos)
+   ============================================================ */
+function setupThemeSelect(currentTheme){
+  const sel = document.getElementById("themeSelect");
+  Object.keys(THEMES).forEach(key=>{
+    const opt = document.createElement("option");
+    opt.value = key; opt.textContent = THEMES[key].label;
+    sel.appendChild(opt);
+  });
+  const params = new URLSearchParams(location.search);
+  const temaParam = params.get("tema");
+  const initial = (temaParam && THEMES[temaParam]) ? temaParam : currentTheme;
+  sel.value = initial;
+  if(initial !== currentTheme) applyTheme(initial);
+  sel.addEventListener("change", ()=> applyTheme(sel.value));
+}
+function setupOptionsPanel(){
+  document.getElementById("btnOptions").addEventListener("click", ()=>{
+    document.getElementById("optionsOverlay").style.display = "flex";
+  });
+  document.getElementById("closeOptions").addEventListener("click", ()=>{
+    document.getElementById("optionsOverlay").style.display = "none";
+  });
+  const favToggle = document.getElementById("favToggle");
+  favToggle.checked = storageGet("rv_show_favoritos", false);
+  favToggle.addEventListener("change", ()=>{
+    storageSet("rv_show_favoritos", favToggle.checked);
+    renderFavoritosRow();
+  });
+}
+
+/* ============================================================
+   Favoritos
+   ============================================================ */
+function toggleFavorito(nombre){
+  const idx = favoritos.indexOf(nombre);
+  if(idx >= 0) favoritos.splice(idx,1); else favoritos.push(nombre);
+  storageSet("rv_favoritos", favoritos);
+  renderFavoritosRow();
+}
+function renderFavoritosRow(){
+  const row = document.getElementById("favoritosRow");
+  const show = storageGet("rv_show_favoritos", false);
+  if(!show || favoritos.length === 0){ row.style.display = "none"; row.innerHTML=""; return; }
+  row.style.display = "flex";
+  row.innerHTML = "";
+  favoritos.forEach(nombre=>{
+    const chip = document.createElement("div");
+    chip.className = "fav-chip";
+    chip.textContent = nombre;
+    chip.addEventListener("click", ()=>{
+      const p = products.find(pr=>pr.nombre === nombre);
+      if(p) handleProductTap(p);
+    });
+    row.appendChild(chip);
+  });
+}
+
+/* ============================================================
+   Carga del catálogo (CSV en vivo, o lista embebida de prueba)
+   ============================================================ */
+function initSessionDefaults(){
+  const params = new URLSearchParams(location.search);
+  const saved = storageGet("rv_session", {});
+  const canalParam = params.get("canal") || saved.canal;
+  const vendedorParam = params.get("vendedor") || saved.vendedor;
+
+  const canalSelect = document.getElementById("canalSelect");
+  CONFIG.canales.forEach(c=>{
+    const opt = document.createElement("option");
+    opt.value = c; opt.textContent = c;
+    canalSelect.appendChild(opt);
+  });
+  if(canalParam && CONFIG.canales.some(c=>normalize(c)===normalize(canalParam))){
+    canalSelect.value = CONFIG.canales.find(c=>normalize(c)===normalize(canalParam));
+  }
+  if(vendedorParam){ document.getElementById("vendedorInput").value = vendedorParam; }
+
+  updateSessionPillText();
+  canalSelect.addEventListener("change", ()=>{ saveSession(); updateSessionPillText(); });
+  document.getElementById("vendedorInput").addEventListener("input", ()=>{ saveSession(); updateSessionPillText(); });
+
+  document.getElementById("sessionExpandBtn").addEventListener("click", ()=>{
+    document.getElementById("sessionPill").style.display = "none";
+    document.getElementById("sessionFields").style.display = "flex";
+  });
+  document.getElementById("sessionCollapseBtn").addEventListener("click", ()=>{
+    document.getElementById("sessionFields").style.display = "none";
+    document.getElementById("sessionPill").style.display = "flex";
+    updateSessionPillText();
+  });
+}
+function saveSession(){
+  storageSet("rv_session", {
+    canal: document.getElementById("canalSelect").value,
+    vendedor: document.getElementById("vendedorInput").value
+  });
+}
+function updateSessionPillText(){
+  const canal = document.getElementById("canalSelect").value || "Canal";
+  const vendedor = document.getElementById("vendedorInput").value || "Vendedor";
+  document.getElementById("sessionPillText").textContent = canal + " · " + vendedor;
+}
+
+function loadInventory(){
+  if(!CONFIG.csvUrl || CONFIG.csvUrl.includes("PEGA_AQUI")){
+    products = EMBEDDED_PRODUCTS;
+    document.getElementById("statusText").textContent =
+      products.length + " productos (lista de prueba — aún no conectada a tu Inventario en vivo)";
+    document.getElementById("mainApp").style.display = "block";
+    document.getElementById("footerBar").style.display = "block";
+    return;
+  }
+  Papa.parse(CONFIG.csvUrl, {
+    download: true,
+    complete: function(results){
+      const rows = results.data.filter(r => r && r.some(c => String(c||"").trim() !== ""));
+      const headerIdx = rows.findIndex(r => r.some(c => normalize(c) === "producto"));
+      if(headerIdx === -1){ showLoadError("No encontré una columna 'Producto' en el CSV."); return; }
+      const header = rows[headerIdx].map(normalize);
+      const nameCol = header.indexOf("producto");
+      const qtyCol = header.indexOf("cantidad");
+      products = rows.slice(headerIdx+1)
+        .filter(r => r[nameCol] && String(r[nameCol]).trim() !== "")
+        .map(r => ({ nombre: String(r[nameCol]).trim(), cantidad: qtyCol>=0 ? r[qtyCol] : "" }));
+      document.getElementById("statusText").textContent = products.length + " productos cargados";
+      document.getElementById("mainApp").style.display = "block";
+      document.getElementById("footerBar").style.display = "block";
+    },
+    error: function(){ showLoadError("No pude descargar el catálogo. Revisa tu conexión o el link publicado."); }
+  });
+}
+function showLoadError(msg){
+  document.getElementById("statusText").textContent = "Error al cargar el catálogo";
+  document.getElementById("configWarning").style.display = "block";
+  document.getElementById("configWarning").textContent = msg;
+}
+
+/* ============================================================
+   Modo catálogo (tomar y descargar fotos por lote)
+   ============================================================ */
+function setupCatalogModeToggle(){
+  document.getElementById("btnCatalogMode").addEventListener("click", ()=>{
+    appMode = appMode === "venta" ? "catalogo" : "venta";
+    document.getElementById("btnCatalogMode").classList.toggle("active", appMode==="catalogo");
+    document.getElementById("ventaSection").style.display = appMode==="venta" ? "block" : "none";
+    document.getElementById("catalogSection").style.display = appMode==="catalogo" ? "block" : "none";
+    document.getElementById("sessionCard").style.display = appMode==="venta" ? "block" : "none";
+    document.getElementById("footerBar").style.display = appMode==="venta" && products.length ? "block" : "none";
+  });
+  document.getElementById("searchInputCatalog").addEventListener("input", (e)=> renderResultsGeneric(e.target.value, "resultsListCatalog", null, true));
+}
+function openPhotoCapture(p){
+  currentSelection = p;
+  const slug = slugify(p.nombre);
+  const card = document.getElementById("catalogCard");
+  card.style.display = "block";
+  card.innerHTML =
+    '<div class="selected-title"></div>' +
+    '<div class="sale-meta" style="margin-top:2px;">archivo: ' + slug + '.jpg</div>' +
+    '<label class="btn-primary photo-btn">📷 Tomar foto<input type="file" accept="image/*" capture="environment" id="catalogPhotoInput" style="display:none;"></label>' +
+    '<img id="catalogPreview" class="photo-preview">' +
+    '<button class="btn-secondary btn-block" id="downloadPhotoBtn" style="margin-top:10px;display:none;">Descargar ' + slug + '.jpg</button>';
+  card.querySelector(".selected-title").textContent = p.nombre;
+
+  let capturedFile = null;
+  document.getElementById("catalogPhotoInput").addEventListener("change", (e)=>{
+    const file = e.target.files[0];
+    if(!file) return;
+    capturedFile = file;
+    const url = URL.createObjectURL(file);
+    const img = document.getElementById("catalogPreview");
+    img.src = url; img.style.display = "block";
+    document.getElementById("downloadPhotoBtn").style.display = "block";
+  });
+  document.getElementById("downloadPhotoBtn").addEventListener("click", ()=>{
+    if(!capturedFile) return;
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(capturedFile);
+    a.download = slug + ".jpg";
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    showToast("Descargada: " + slug + ".jpg — súbela a /images cuando puedas");
+    card.style.display = "none";
+    document.getElementById("searchInputCatalog").value = "";
+    document.getElementById("resultsListCatalog").innerHTML = "";
+    document.getElementById("searchInputCatalog").focus();
+  });
+}
+
+/* ============================================================
+   Buscador / autocompletar (compartido venta + catálogo)
+   ============================================================ */
+document.getElementById("searchInput").addEventListener("input", function(e){
+  renderResultsGeneric(e.target.value, "resultsList", "manualLink", false);
+});
+document.getElementById("manualLink").addEventListener("click", function(){
+  const q = document.getElementById("searchInput").value;
+  openForm(null, q);
+});
+
+function renderResultsGeneric(query, listId, manualLinkId, isCatalogMode){
+  const list = document.getElementById(listId);
+  const manualLink = manualLinkId ? document.getElementById(manualLinkId) : null;
+  const q = normalize(query);
+
+  if(q === ""){
+    list.style.display = "none"; list.innerHTML = "";
+    if(manualLink){ manualLink.style.display = "block"; manualLink.textContent = "+ No está en la lista, registrar manual"; }
+    return;
+  }
+  const words = q.split(/\s+/);
+  const matches = products.filter(p=>{
+    const n = normalize(p.nombre);
+    return words.every(w => n.includes(w));
+  }).slice(0, 8);
+
+  if(matches.length === 0){
+    list.style.display = "none"; list.innerHTML = "";
+    if(manualLink){ manualLink.style.display = "block"; manualLink.textContent = '+ Registrar "' + query + '" manual'; }
+    return;
+  }
+
+  list.style.display = "block";
+  list.innerHTML = "";
+  matches.forEach(p=>{
+    const div = document.createElement("div");
+    div.className = "result-item";
+    div.innerHTML =
+      '<img class="thumb">' +
+      '<div class="result-text"><span class="result-name"></span><span class="result-qty"></span></div>' +
+      (isCatalogMode ? "" : '<button class="star-btn" type="button"></button>');
+    const img = div.querySelector(".thumb");
+    const slug = slugify(p.nombre);
+    img.dataset.slug = slug; img.dataset.tried = "jpg";
+    img.src = CONFIG.imagesFolder + slug + ".jpg";
+    img.onerror = ()=> handleImgError(img);
+    div.querySelector(".result-name").textContent = p.nombre;
+    div.querySelector(".result-qty").textContent = (p.cantidad !== "" ? "exist. " + p.cantidad : "");
+
+    if(!isCatalogMode){
+      const starBtn = div.querySelector(".star-btn");
+      starBtn.textContent = favoritos.includes(p.nombre) ? "★" : "☆";
+      starBtn.addEventListener("click", (e)=>{ e.stopPropagation(); toggleFavorito(p.nombre); starBtn.textContent = favoritos.includes(p.nombre) ? "★" : "☆"; });
+    }
+    div.addEventListener("click", ()=>{
+      if(isCatalogMode) openPhotoCapture(p); else handleProductTap(p);
+    });
+    list.appendChild(div);
+  });
+
+  if(manualLink){ manualLink.style.display = "block"; manualLink.textContent = '+ Registrar "' + query + '" manual'; }
+}
+
+function handleProductTap(p){
+  if(appMode === "catalogo"){ openPhotoCapture(p); return; }
+  document.getElementById("searchInput").value = "";
+  document.getElementById("resultsList").style.display = "none";
+  document.getElementById("resultsList").innerHTML = "";
+  openForm(p, "");
+}
+
+/* ============================================================
+   Formulario de venta (catálogo o manual)
+   ============================================================ */
+function openForm(product, prefillName){
+  currentSelection = product;
+  pendingManualPhoto = null;
+  const card = document.getElementById("selectedCard");
+  card.style.display = "block";
+  const isManual = product === null;
+  const slug = product ? slugify(product.nombre) : null;
+
+  const head = isManual
+    ? '<input type="text" id="manualName" placeholder="Nombre del producto" value="' + escapeAttr(prefillName||"") + '">'
+    : '<div class="selected-head"><img class="thumb-lg" id="formThumb"><div class="selected-title"></div></div>';
+
+  card.innerHTML =
+    '<div style="display:flex;justify-content:space-between;align-items:flex-start;">' +
+      '<div style="flex:1;">' + head + '</div>' +
+      '<button class="close-x" id="closeForm">✕</button>' +
+    '</div>' +
+    (isManual
+      ? '<div class="manual-hint">Sé descriptivo: color, material, empaque… <span class="badge badge-manual">MANUAL</span></div>' +
+        '<label class="btn-secondary photo-btn">📷 Adjuntar foto de referencia (opcional)<input type="file" accept="image/*" capture="environment" id="manualPhotoInput" style="display:none;"></label>' +
+        '<img id="manualPhotoPreview" class="photo-preview">'
+      : "") +
+    '<div class="grid2" style="margin-top:12px;">' +
+      '<div class="field"><label>Cantidad</label><input type="number" id="qtyInput" min="1" value="1"></div>' +
+      '<div class="field"><label>Precio unitario</label><input type="number" id="priceInput" min="0" step="0.01" placeholder="0.00"></div>' +
+    '</div>' +
+    '<div class="field" style="margin-top:10px;"><label>Fecha</label><input type="date" id="dateInput" value="' + todayISO() + '"></div>' +
+    '<div class="total-line"><span>Total</span><strong id="totalPreview">$0.00</strong></div>' +
+    '<button class="btn-primary" id="addSaleBtn">Agregar venta</button>';
+
+  if(!isManual){
+    card.querySelector(".selected-title").textContent = product.nombre;
+    const img = document.getElementById("formThumb");
+    img.dataset.slug = slug; img.dataset.tried = "jpg";
+    img.src = CONFIG.imagesFolder + slug + ".jpg";
+    img.onerror = ()=> handleImgError(img);
+  } else {
+    const photoInput = document.getElementById("manualPhotoInput");
+    photoInput.addEventListener("change", (e)=>{
+      const file = e.target.files[0];
+      if(!file) return;
+      compressToDataURL(file, 240, 0.6).then(dataUrl=>{
+        pendingManualPhoto = dataUrl;
+        const preview = document.getElementById("manualPhotoPreview");
+        preview.src = dataUrl; preview.style.display = "block";
+      });
+    });
+  }
+
+  document.getElementById("closeForm").addEventListener("click", closeForm);
+  const qtyEl = document.getElementById("qtyInput");
+  const priceEl = document.getElementById("priceInput");
+  const updateTotal = ()=>{
+    const t = (Number(qtyEl.value)||0) * (Number(priceEl.value)||0);
+    document.getElementById("totalPreview").textContent = money(t);
+  };
+  qtyEl.addEventListener("input", updateTotal);
+  priceEl.addEventListener("input", updateTotal);
+  document.getElementById("addSaleBtn").addEventListener("click", ()=> confirmAddSale(isManual));
+  card.scrollIntoView({behavior:"smooth", block:"center"});
+}
+
+function compressToDataURL(file, maxWidth, quality){
+  return new Promise((resolve)=>{
+    const img = new Image();
+    const reader = new FileReader();
+    reader.onload = ()=>{
+      img.onload = ()=>{
+        const scale = Math.min(1, maxWidth / img.width);
+        const canvas = document.createElement("canvas");
+        canvas.width = img.width * scale;
+        canvas.height = img.height * scale;
+        canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL("image/jpeg", quality));
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+function closeForm(){
+  document.getElementById("selectedCard").style.display = "none";
+  document.getElementById("selectedCard").innerHTML = "";
+  currentSelection = null;
+  pendingManualPhoto = null;
+}
+
+function confirmAddSale(isManual){
+  const qty = Number(document.getElementById("qtyInput").value) || 0;
+  const price = Number(document.getElementById("priceInput").value) || 0;
+  const date = document.getElementById("dateInput").value || todayISO();
+  if(qty <= 0){ showToast("Pon una cantidad válida"); return; }
+  if(price <= 0){ showToast("Pon un precio válido"); return; }
+
+  let nombre;
+  if(isManual){
+    nombre = document.getElementById("manualName").value.trim();
+    if(!nombre){ showToast("Escribe el nombre del producto"); return; }
+  } else {
+    nombre = currentSelection.nombre;
+  }
+
+  const canal = isManual ? "MANUAL" : document.getElementById("canalSelect").value;
+  const vendedor = document.getElementById("vendedorInput").value.trim();
+
+  todaySales.push({
+    id: uid(), nombre: nombre, cantidad: qty, precio: price, total: qty*price,
+    canal: canal, fecha: date, socio: vendedor, manual: isManual,
+    foto: isManual ? pendingManualPhoto : null
+  });
+
+  persistToday();
+  closeForm();
+  renderToday();
+  showToast("Venta agregada");
+}
+
+function persistToday(){
+  // No guardamos la foto de referencia: es solo ayuda visual de esta sesión.
+  const liviano = todaySales.map(({foto, ...resto}) => resto);
+  storageSet("rv_today_sales", liviano);
+}
+
+/* ============================================================
+   Lista de ventas de hoy
+   ============================================================ */
+function renderToday(){
+  const listEl = document.getElementById("todayList");
+  const emptyEl = document.getElementById("emptyNote");
+
+  if(todaySales.length === 0){
+    emptyEl.style.display = "block"; listEl.innerHTML = "";
+  } else {
+    emptyEl.style.display = "none"; listEl.innerHTML = "";
+    todaySales.slice().reverse().forEach(s=>{
+      const row = document.createElement("div");
+      row.className = "sale-row";
+      row.innerHTML =
+        '<div class="sale-left">' +
+          (s.foto ? '<img src="' + s.foto + '" style="width:38px;height:38px;border-radius:8px;object-fit:cover;">' : '') +
+          '<div><div class="sale-name"></div><div class="sale-meta"></div></div>' +
+        '</div>' +
+        '<div style="text-align:right;">' +
+          '<div class="sale-amount"></div>' +
+          '<button class="close-x" type="button">✕</button>' +
+        '</div>';
+      row.querySelector(".sale-name").textContent = s.nombre;
+      if(s.manual){
+        const b = document.createElement("span");
+        b.className = "badge badge-manual"; b.textContent = "MANUAL";
+        row.querySelector(".sale-name").appendChild(b);
+      }
+      row.querySelector(".sale-meta").textContent = s.cantidad + " × " + money(s.precio) + " · " + s.canal;
+      row.querySelector(".sale-amount").textContent = money(s.total);
+      row.querySelector("button").addEventListener("click", ()=> removeSale(s.id));
+      listEl.appendChild(row);
+    });
+  }
+
+  const count = todaySales.length;
+  const total = todaySales.reduce((a,s)=>a+s.total, 0);
+  document.getElementById("footerCount").textContent = count + (count===1 ? " venta" : " ventas");
+  document.getElementById("footerTotal").textContent = money(total);
+}
+function removeSale(id){
+  todaySales = todaySales.filter(s=>s.id !== id);
+  persistToday();
+  renderToday();
+}
+
+/* ============================================================
+   Copiar a Sheets / Enviar por WhatsApp
+   ============================================================ */
+function buildDatosTSV(){
+  return todaySales.map(s => [s.nombre, s.cantidad, s.precio.toFixed(2), s.total.toFixed(2), s.canal, s.fecha].join("\t")).join("\n");
+}
+function buildSocioTSV(){
+  return todaySales.map(s => s.socio || "").join("\n");
+}
+document.getElementById("btnCopyDatos").addEventListener("click", async ()=>{
+  if(todaySales.length === 0){ showToast("No hay ventas que copiar"); return; }
+  const ok = await copyText(buildDatosTSV());
+  showToast(ok ? "Copiado — pega en la columna A" : "No se pudo copiar");
+});
+document.getElementById("btnCopySocio").addEventListener("click", async ()=>{
+  if(todaySales.length === 0){ showToast("No hay ventas que copiar"); return; }
+  const ok = await copyText(buildSocioTSV());
+  showToast(ok ? "Copiado — pega en la columna J" : "No se pudo copiar");
+});
+document.getElementById("btnWhatsapp").addEventListener("click", ()=>{
+  if(todaySales.length === 0){ showToast("No hay ventas que enviar"); return; }
+  if(!CONFIG.whatsappNumber){ showToast("Falta configurar el número de WhatsApp"); return; }
+  const vendedor = document.getElementById("vendedorInput").value.trim() || "Sin nombre";
+  const total = todaySales.reduce((a,s)=>a+s.total,0);
+  const texto =
+    "Ventas de hoy - " + vendedor + " - " + todayISO() + "\n" +
+    todaySales.length + " ventas - Total: " + money(total) + "\n\n" +
+    "```" + buildDatosTSV() + "```\n\n" +
+    "Socio (columna J):\n```" + buildSocioTSV() + "```";
+  const url = "https://wa.me/" + CONFIG.whatsappNumber + "?text=" + encodeURIComponent(texto);
+  window.open(url, "_blank");
+});
+document.getElementById("btnClearDay").addEventListener("click", ()=>{
+  if(todaySales.length === 0) return;
+  if(confirm("¿Vaciar la lista de ventas de hoy? Asegúrate de haberlas pegado o enviado ya.")){
+    todaySales = [];
+    persistToday();
+    renderToday();
+  }
+});
+
+/* ============================================================
+   CATÁLOGO DE PRUEBA (embebido) — 12/sep/2026
+   Foto fija del Inventario, solo para probar hoy sin CSV publicado.
+   En cuanto pegues un link real en CONFIG.csvUrl, se ignora sola.
+   ============================================================ */
+const EMBEDDED_PRODUCTS = [{"nombre": "Abanico de plastico", "cantidad": "10"}, {"nombre": "Adaptador Audio USB-C a 3.5mm Ele-Gate WI.QLX16 con Chip DAC", "cantidad": "2"}, {"nombre": "Adaptador bluetooth", "cantidad": "2"}, {"nombre": "Adaptador cargador universal 6 puntas intercambiables elegate", "cantidad": "1"}, {"nombre": "Adaptador OTG Lightning", "cantidad": "2"}, {"nombre": "Adaptador OTG Tipo C a USB", "cantidad": "4"}, {"nombre": "Adaptador OTG Usb a Tipo C", "cantidad": "3"}, {"nombre": "Adaptador OTG v8 a usb", "cantidad": "3"}, {"nombre": "Adaptador wifi", "cantidad": "2"}, {"nombre": "Adaptador/lector otg sd tipo c", "cantidad": "1"}, {"nombre": "Adaptador/lector sd USB", "cantidad": "5"}, {"nombre": "Adorno calavera colgante con luz y sonido", "cantidad": "3"}, {"nombre": "Adorno con leds para halloween y dia de muertos", "cantidad": "4"}, {"nombre": "Adorno letreo navide\u00f1o 3d chico", "cantidad": "3"}, {"nombre": "Adorno para halloween y dia de muertos", "cantidad": "5"}, {"nombre": "Afilador de cuchillos", "cantidad": "2"}, {"nombre": "Aflojatodo 110 ml", "cantidad": "3"}, {"nombre": "Alcohol isopropilico aerosol 440ml", "cantidad": "3"}, {"nombre": "Alicate pinza acero inox para u\u00f1as", "cantidad": "1"}, {"nombre": "Anillo halloween", "cantidad": "66"}, {"nombre": "Antena TV Digital HD", "cantidad": "4"}, {"nombre": "Antifaz de zorro y gato", "cantidad": "2"}, {"nombre": "Aretes dia de muertos y halloween", "cantidad": "8"}, {"nombre": "Audifono bluetooth 2 tipos de microfono para casco y moto", "cantidad": "1"}, {"nombre": "Audifonos alambricos 1Hora", "cantidad": "2"}, {"nombre": "Audifonos alambricos By-aud-300", "cantidad": "-1"}, {"nombre": "Audifonos alambricos By-aud-302", "cantidad": "-1"}, {"nombre": "Audifonos alambricos entrada tipo c 1Hora", "cantidad": "2"}, {"nombre": "Audifonos alambricos moreka", "cantidad": "4"}, {"nombre": "Audifonos diadema bluetooth baterias 7 horas premium", "cantidad": "1"}, {"nombre": "Audifonos diadema bluetooth Buytiti", "cantidad": "1"}, {"nombre": "Audifonos inalambricos 1Hora AUT203", "cantidad": "1"}, {"nombre": "Audifonos inalambricos Buytiti", "cantidad": "1"}, {"nombre": "Auriculares bluetooth bose", "cantidad": "2"}, {"nombre": "Auriculares bluetooth Buytiti con pantalla", "cantidad": "3"}, {"nombre": "Auriculares Inpods 12", "cantidad": "3"}, {"nombre": "Autoestereo Bluetooth", "cantidad": "1"}, {"nombre": "Banda afelpada para cabello", "cantidad": "2"}, {"nombre": "Bascula digital de cocina", "cantidad": "25"}, {"nombre": "Bascula digital peso corporal", "cantidad": "2"}, {"nombre": "Baston selfie bluetooth Buytiti", "cantidad": "5"}, {"nombre": "Baston Selfie Bluetooth y control", "cantidad": "3"}, {"nombre": "Baston Selfie Bluetooth y control Buytiti 170 cm", "cantidad": "3"}, {"nombre": "Bateria Litio 18650 recargable", "cantidad": "16"}, {"nombre": "Bateria portatil llavero 3600mh", "cantidad": "1"}, {"nombre": "Batidorde cafe buytiti", "cantidad": "3"}, {"nombre": "Blister 2 pilas AAA recargables 350 mah", "cantidad": "1"}, {"nombre": "Blister 4 pilas AAA recargables 1600mah BTY", "cantidad": "3"}, {"nombre": "Bocina Bluetooth JBL", "cantidad": "2"}, {"nombre": "Bocina cilindro bluetooth", "cantidad": "2"}, {"nombre": "Bocina cilindro bluetooth rgb FOL", "cantidad": "2"}, {"nombre": "Bocina Fol portatil 110w ovalada", "cantidad": "1"}, {"nombre": "Bocina triangular bluetooth", "cantidad": "1"}, {"nombre": "Bolsa de calabaza chica para dulces halloween", "cantidad": "2"}, {"nombre": "Bolsa de calabaza para dulces halloween", "cantidad": "2"}, {"nombre": "Bolsa para dulces halloween", "cantidad": "8"}, {"nombre": "Bolso Monedero", "cantidad": "3"}, {"nombre": "Bomba de aire manual", "cantidad": "1"}, {"nombre": "Bralette de encaje", "cantidad": "4"}, {"nombre": "Brasier", "cantidad": "1"}, {"nombre": "Brocha keer 2 1/2\"", "cantidad": "1"}, {"nombre": "Cable audio rca a 3.5 mm", "cantidad": "1"}, {"nombre": "Cable audio y video rca 1,5 m", "cantidad": "1"}, {"nombre": "Cable auxiliar", "cantidad": "5"}, {"nombre": "Cable bifasico", "cantidad": "2"}, {"nombre": "Cable Dupont 20 cm", "cantidad": "6"}, {"nombre": "Cable entrada tipo c a tipo c", "cantidad": "3"}, {"nombre": "Cable entrada tipo c a tipo c 1Hora", "cantidad": "2"}, {"nombre": "Cable HDMI 1.5m", "cantidad": "1"}, {"nombre": "Cable HDMI 3m", "cantidad": "1"}, {"nombre": "Cable HDMI 5m", "cantidad": "1"}, {"nombre": "Cable lightning a auriculares", "cantidad": "3"}, {"nombre": "Cable lightning a auxiliar", "cantidad": "1"}, {"nombre": "Cable tipo C", "cantidad": "2"}, {"nombre": "Cable tipo c 2 m", "cantidad": "2"}, {"nombre": "Cable tipo c a 3 en 1 tipo c, lightning, v8", "cantidad": "3"}, {"nombre": "Cable tipo c a auriculares", "cantidad": "1"}, {"nombre": "Cable tipo c a auxiliar", "cantidad": "2"}, {"nombre": "Cable tipo c a lightning", "cantidad": "5"}, {"nombre": "Cable tipo v8 3M", "cantidad": "1"}, {"nombre": "Cable usb a 3 en 1 Tipo c, lightning, v8", "cantidad": "5"}, {"nombre": "Cable Usb a lightning 1M 1Hora", "cantidad": "8"}, {"nombre": "Cable Usb a tipo C 1M 1Hora", "cantidad": "5"}, {"nombre": "Cable Usb a tipo C 2M 1Hora", "cantidad": "2"}, {"nombre": "Cable usb a tipo c 3M", "cantidad": "4"}, {"nombre": "Cable Usb a V8 1M 1Hora", "cantidad": "14"}, {"nombre": "Cable usb a v8 3M elegate", "cantidad": "4"}, {"nombre": "Cable V8 + tipo C 1Hora 1M", "cantidad": "1"}, {"nombre": "Caja con 30 tronadores de pirotecnia", "cantidad": "8"}, {"nombre": "Calabaza mediana con luz y sonido con tapa para dulces", "cantidad": "5"}, {"nombre": "Calaverita de azucar extra grande", "cantidad": "3"}, {"nombre": "Calaverita de azucar jumbo", "cantidad": "1"}, {"nombre": "Calcetin navide\u00f1o afelpado", "cantidad": "6"}, {"nombre": "Calcetin navide\u00f1o economico", "cantidad": "1"}, {"nombre": "Calcetin personajes de bob esponja", "cantidad": "6"}, {"nombre": "Calcetines antiderrapantes interior afelpado", "cantidad": "3"}, {"nombre": "Calentador de agua", "cantidad": "3"}, {"nombre": "Calzon de mujer", "cantidad": "4"}, {"nombre": "Camion con accesorio para playa", "cantidad": "1"}, {"nombre": "Camisa para mascota de esqueleto", "cantidad": "2"}, {"nombre": "Candado 32 mm", "cantidad": "1"}, {"nombre": "Candado 40 mm", "cantidad": "3"}, {"nombre": "Candado 50 mm 4 llaves", "cantidad": "1"}, {"nombre": "Candado de combinacion 50 mm", "cantidad": "2"}, {"nombre": "Cangurera sport", "cantidad": "1"}, {"nombre": "Cangurera tactica 4 compartimientos", "cantidad": "4"}, {"nombre": "Capucha balaclava filtro", "cantidad": "3"}, {"nombre": "Cargador arrancador bateria de auto", "cantidad": "2"}, {"nombre": "Cargador Bateria Auto", "cantidad": "2"}, {"nombre": "Cargador bateria de litio", "cantidad": "3"}, {"nombre": "Cargador Buitity v8 2.1A", "cantidad": "1"}, {"nombre": "Cargador Inalambrico cel 10W", "cantidad": "1"}, {"nombre": "Cargador plug 4 en 1 para carro", "cantidad": "2"}, {"nombre": "Cargador tipo c puerto usb c 5A", "cantidad": "1"}, {"nombre": "Cargador universal bateria Li-ion 4 puertos", "cantidad": "1"}, {"nombre": "Cargador Universal BTY y 4 pilas AA", "cantidad": "2"}, {"nombre": "Carreta navide\u00f1a con globo de nieve con luz", "cantidad": "1"}, {"nombre": "Carritos colores metalicos", "cantidad": "4"}, {"nombre": "Carritos de plastico", "cantidad": "7"}, {"nombre": "Carro R/C deformable pulsera inductiva elegate", "cantidad": "1"}, {"nombre": "Carro R/C todo terreno 360\u00ba", "cantidad": "1"}, {"nombre": "Cartera de piel hombre", "cantidad": "2"}, {"nombre": "Celular de Juguete con aros", "cantidad": "7"}, {"nombre": "Cepillo limpieza termo", "cantidad": "2"}, {"nombre": "Chocolate navide\u00f1o", "cantidad": "4"}, {"nombre": "Cinta Azul grande", "cantidad": "6"}, {"nombre": "Cinta negra aislante", "cantidad": "11"}, {"nombre": "Cinta Transparente chica", "cantidad": "10"}, {"nombre": "Cinta Transparente grande", "cantidad": "1"}, {"nombre": "Cinturon de hule hebilla metalica", "cantidad": "2"}, {"nombre": "Collar con dije corazon", "cantidad": "2"}, {"nombre": "Collar llave de acero nudo bruja", "cantidad": "2"}, {"nombre": "Collar ojo turco", "cantidad": "1"}, {"nombre": "Combo cargador 1Hora puerto usb y tipo c con cable lightning 20w", "cantidad": "1"}, {"nombre": "Combo cargador 2 puertos tipo c 1 usb 65w", "cantidad": "1"}, {"nombre": "Combo cargador buytiti carga rapida puerto tipo c 20w 3.1a", "cantidad": "1"}, {"nombre": "Combo cargador elegate puerto Usb y tipo c 20w", "cantidad": "2"}, {"nombre": "Combo cargador tipo c 1hora 18w", "cantidad": "1"}, {"nombre": "Combo marvel Spiderman y Hulk", "cantidad": "1"}, {"nombre": "Combo marvel Spiderman y Mile morales", "cantidad": "1"}, {"nombre": "Combo smartwatch, audifonos inalambricos y bocina", "cantidad": "1"}, {"nombre": "Combo Toy Story Woody y Buzz lightyear", "cantidad": "1"}, {"nombre": "Consola m15 20000 juegos 64 gb 2 controles", "cantidad": "2"}, {"nombre": "Consola portatil m3 900 juegos", "cantidad": "2"}, {"nombre": "Control inalambrico Multiplataforma recargable", "cantidad": "2"}, {"nombre": "Control Xbox 360 alambrico elegate", "cantidad": "1"}, {"nombre": "Cortau\u00f1as para mascota", "cantidad": "1"}, {"nombre": "Crema facial Colageno", "cantidad": "2"}, {"nombre": "Cubo cargador 1 puerto", "cantidad": "2"}, {"nombre": "Cubo cargador 120 w 2 puertos 2 usb 2 puertos tipo c", "cantidad": "1"}, {"nombre": "Cubo cargador puerto tipo c 1Hora", "cantidad": "2"}, {"nombre": "Cubo cargador puerto tipo c 1Hora 30w", "cantidad": "1"}, {"nombre": "Cubo cargador usb y tipo c Moreka 40w", "cantidad": "2"}, {"nombre": "Cubo rubik", "cantidad": "3"}, {"nombre": "Cubrebocas", "cantidad": "91"}, {"nombre": "Cucharas 12 pzs", "cantidad": "2"}, {"nombre": "Cuchillo de carnicero con sangre plastico", "cantidad": "3"}, {"nombre": "Cuchillo mediano halloween juguete", "cantidad": "1"}, {"nombre": "Cuerda con gancho para equipaje", "cantidad": "3"}, {"nombre": "Cutter", "cantidad": "3"}, {"nombre": "Desarmador punta cruz", "cantidad": "1"}, {"nombre": "Desarmador punta plana", "cantidad": "2"}, {"nombre": "Desarmador puntas intercambiables", "cantidad": "4"}, {"nombre": "Diadema con flores para catrina", "cantidad": "3"}, {"nombre": "Difusor Calavera", "cantidad": "2"}, {"nombre": "Disfraz calavera #10", "cantidad": "1"}, {"nombre": "Disfraz calavera #12", "cantidad": "1"}, {"nombre": "Disfraz de catrin #6", "cantidad": "1"}, {"nombre": "Disfraz de catrina con encaje", "cantidad": "1"}, {"nombre": "Disfraz payaso terrifier", "cantidad": "1"}, {"nombre": "Dispensador de agua electrico Buytiti", "cantidad": "1"}, {"nombre": "Divisor de audio auxiliar y microfono", "cantidad": "1"}, {"nombre": "Drone 4k dual", "cantidad": "1"}, {"nombre": "Eliminador voltaje variable conector intercambiable", "cantidad": "2"}, {"nombre": "Encendedor electronico recargable", "cantidad": "1"}, {"nombre": "Escarcha de calaveras halloween", "cantidad": "4"}, {"nombre": "Escencia aceite con hierbas aromaticas", "cantidad": "3"}, {"nombre": "Escencia para humidificador", "cantidad": "11"}, {"nombre": "Escoba halloween para brujita", "cantidad": "1"}, {"nombre": "Esmeriladora 850w Fumetax", "cantidad": "2"}, {"nombre": "Espatula 2\"", "cantidad": "1"}, {"nombre": "Espatula 4\"", "cantidad": "2"}, {"nombre": "Espatula 5 usos", "cantidad": "1"}, {"nombre": "Especiero giratorio", "cantidad": "1"}, {"nombre": "Espejo de bolsillo", "cantidad": "1"}, {"nombre": "Espejo rectangular plastico", "cantidad": "2"}, {"nombre": "Esqueleto colgante dia de muertos", "cantidad": "1"}, {"nombre": "Estaca para jardin brazo esqueleto halloween", "cantidad": "3"}, {"nombre": "Estuche 13 brocas economico", "cantidad": "2"}, {"nombre": "Estuche 36 marcadores estilo brocha", "cantidad": "1"}, {"nombre": "Estuche con 4 extractores de tornillos", "cantidad": "2"}, {"nombre": "Estuche con 5 brocas", "cantidad": "2"}, {"nombre": "Estuche de cortau\u00f1as acero inox", "cantidad": "20"}, {"nombre": "Estuche Forma Corazon", "cantidad": "5"}, {"nombre": "Estuche Forma Corazon Grande", "cantidad": "8"}, {"nombre": "Estuche joyero", "cantidad": "2"}, {"nombre": "Estuche para bicicleta con llave multiherramienta", "cantidad": "1"}, {"nombre": "Extension electrica 2 m", "cantidad": "5"}, {"nombre": "Extension electrica 3 m", "cantidad": "4"}, {"nombre": "Extension electrica uso rudo 2 m", "cantidad": "5"}, {"nombre": "Extension electrica uso rudo 3 m", "cantidad": "1"}, {"nombre": "Extension USB 3 Metros", "cantidad": "1"}, {"nombre": "Flexometro 10m", "cantidad": "2"}, {"nombre": "Flexometro 2 m", "cantidad": "2"}, {"nombre": "Flexometro 5 m", "cantidad": "3"}, {"nombre": "Flexometro 7,5 m", "cantidad": "3"}, {"nombre": "Flor de cempasuchil de papel crepe 25 cm", "cantidad": "3"}, {"nombre": "Flor de cempasuchil de papel crepe 8 y 10 cm", "cantidad": "138"}, {"nombre": "Foco ahorrador luz fria 50w", "cantidad": "1"}, {"nombre": "Foco inteligente wifi compatible con alexa 9w 900 lumenes", "cantidad": "2"}, {"nombre": "Foco led 15w", "cantidad": "1"}, {"nombre": "Freidora de aire elegate", "cantidad": "1"}, {"nombre": "Funda protector Iphone", "cantidad": "1"}, {"nombre": "Globo dia de muertos", "cantidad": "2"}, {"nombre": "Gorra Beisbol", "cantidad": "1"}, {"nombre": "Gotero sangre falsa", "cantidad": "4"}, {"nombre": "Guada\u00f1a halloween", "cantidad": "1"}, {"nombre": "Guada\u00f1a pastico halloween", "cantidad": "1"}, {"nombre": "Guantes para trabajo", "cantidad": "3"}, {"nombre": "Guantes Proteccion Motociclista Anti Derrape T\u00e1ctil", "cantidad": "2"}, {"nombre": "Guantes sin dedos proteccion nudillos", "cantidad": "3"}, {"nombre": "Hidrolavadora 2 baterias", "cantidad": "2"}, {"nombre": "Hub usb 4 puertos", "cantidad": "3"}, {"nombre": "Humidificador de gato", "cantidad": "2"}, {"nombre": "Iman neodimio 50 pzs 4x2mm", "cantidad": "1"}, {"nombre": "Impermeable", "cantidad": "1"}, {"nombre": "Impermeable adulto elegate", "cantidad": "2"}, {"nombre": "Impermeable desechable", "cantidad": "10"}, {"nombre": "Impermeable infantil", "cantidad": "3"}, {"nombre": "Incienso artesanal 10 varas", "cantidad": "2"}, {"nombre": "Incienso hexagonal", "cantidad": "1"}, {"nombre": "Inversion", "cantidad": "1"}, {"nombre": "Inversion 2", "cantidad": "1"}, {"nombre": "Inversion 3", "cantidad": "1"}, {"nombre": "Inversor 500W", "cantidad": "1"}, {"nombre": "Jabon aclarador de arroz", "cantidad": "2"}, {"nombre": "Juego 3 cepillos de alambre", "cantidad": "2"}, {"nombre": "Juego 3 llaves inglesas de 10\" a 15\"", "cantidad": "2"}, {"nombre": "Juego de 3 adaptadores para dados", "cantidad": "4"}, {"nombre": "Juego de 3 pinzas 6\" para electricista", "cantidad": "3"}, {"nombre": "Juego de 3 pinzas para electronicos", "cantidad": "3"}, {"nombre": "Juego de 5 pinzas", "cantidad": "1"}, {"nombre": "Juego de 7 brocas para madera", "cantidad": "3"}, {"nombre": "Juego de desarmadores delgados", "cantidad": "2"}, {"nombre": "Juego de duyas", "cantidad": "2"}, {"nombre": "Juego de Matraca 40 pzs", "cantidad": "2"}, {"nombre": "Juego de Matraca 46 pzs", "cantidad": "3"}, {"nombre": "Juego de moldes para galletas", "cantidad": "1"}, {"nombre": "Juego de puntas y conectores para taladro", "cantidad": "1"}, {"nombre": "Juego destornillador para cel", "cantidad": "3"}, {"nombre": "Juego destornillador para cel 32 pzs TRUPER", "cantidad": "1"}, {"nombre": "Juguete Cactus bailador", "cantidad": "1"}, {"nombre": "Juguete de broma de toques electricos", "cantidad": "2"}, {"nombre": "Juguete para Mascota Hueso", "cantidad": "5"}, {"nombre": "Juguete para Mascota pelota", "cantidad": "2"}, {"nombre": "Juguete set de mini ollas y utensilios de cocina metalicos", "cantidad": "1"}, {"nombre": "Kit basico para parchar bicicleta", "cantidad": "-1"}, {"nombre": "Kit limpiatrastes", "cantidad": "1"}, {"nombre": "Kit para ponchaduras de neumaticos", "cantidad": "1"}, {"nombre": "Kit para u\u00f1as", "cantidad": "1"}, {"nombre": "Kit teclado y mouse inalambricos", "cantidad": "1"}, {"nombre": "Labial balsamo frutitas", "cantidad": "3"}, {"nombre": "Lampara con rosa encapsulada", "cantidad": "3"}, {"nombre": "Lampara de hongo", "cantidad": "1"}, {"nombre": "Lampara de queroseno halloween calabaza", "cantidad": "2"}, {"nombre": "Lampara vela craneo halloween", "cantidad": "4"}, {"nombre": "Laser alta potencia", "cantidad": "1"}, {"nombre": "Lazo para tendedero 10 m", "cantidad": "12"}, {"nombre": "Lazo para tendedero 20 m", "cantidad": "1"}, {"nombre": "Lentes de sol", "cantidad": "2"}, {"nombre": "Lentes de sol polarizados", "cantidad": "1"}, {"nombre": "Lentes transparentes de seguridad", "cantidad": "1"}, {"nombre": "Lima para u\u00f1as", "cantidad": "2"}, {"nombre": "Linterna laser paralizador", "cantidad": "2"}, {"nombre": "Linterna led bateria recargable", "cantidad": "3"}, {"nombre": "Linterna led recargable Buytiti", "cantidad": "9"}, {"nombre": "Linterna minero", "cantidad": "3"}, {"nombre": "Llana dentada", "cantidad": "1"}, {"nombre": "Llave inglesa stilson 10\"", "cantidad": "3"}, {"nombre": "Llave inglesa stilson 18 Amarilla\"", "cantidad": "4"}, {"nombre": "Llave inglesa stilson 18\"", "cantidad": "1"}, {"nombre": "Llave inglesa stilson 8\"", "cantidad": "1"}, {"nombre": "Llave multifuncinal giratoria 48 en 1", "cantidad": "2"}, {"nombre": "Llave perica 12\"", "cantidad": "1"}, {"nombre": "Llave perica 6\"", "cantidad": "1"}, {"nombre": "Llave perica 8\"", "cantidad": "2"}, {"nombre": "Llavero cubo rubik", "cantidad": "29"}, {"nombre": "Llavero de peluche Hello Kitty", "cantidad": "1"}, {"nombre": "Llavero de peluche vengadores", "cantidad": "6"}, {"nombre": "Llavero de peluche y pedreria Hello Kitty", "cantidad": "3"}, {"nombre": "Llavero de silicon diferentes personajes", "cantidad": "4"}, {"nombre": "Llavero Dragon Ball", "cantidad": "3"}, {"nombre": "Llavero flexometro", "cantidad": "23"}, {"nombre": "Llavero heroes Marvel y caricaturas", "cantidad": "8"}, {"nombre": "Llavero laser", "cantidad": "35"}, {"nombre": "Llavero llanta flexometro", "cantidad": "3"}, {"nombre": "Llavero mano ojo turco", "cantidad": "3"}, {"nombre": "Llavero metalico 4 herramientas", "cantidad": "1"}, {"nombre": "Llavero mini flexometro", "cantidad": "5"}, {"nombre": "Llavero mini game", "cantidad": "7"}, {"nombre": "Llavero mosqueton", "cantidad": "2"}, {"nombre": "Llavero ojo turco y pompones", "cantidad": "10"}, {"nombre": "Llavero peluche Baby Yoda", "cantidad": "2"}, {"nombre": "Llavero peluche Mike Wazowski", "cantidad": "1"}, {"nombre": "Llavero peluche Stich", "cantidad": "6"}, {"nombre": "Llavero personajes de Terror", "cantidad": "16"}, {"nombre": "Llavero platano", "cantidad": "32"}, {"nombre": "Llavero rompecabezas", "cantidad": "3"}, {"nombre": "Llavero Spiderman", "cantidad": "2"}, {"nombre": "Llavero Stich chico", "cantidad": "2"}, {"nombre": "Llavero Susuwatari", "cantidad": "41"}, {"nombre": "Llavero tactico multifuncional acero 4 herramientas", "cantidad": "1"}, {"nombre": "Llavero Tenis con lampara, laser y toques de broma", "cantidad": "1"}, {"nombre": "Llaves allen", "cantidad": "6"}, {"nombre": "Llaves economicas allen", "cantidad": "4"}, {"nombre": "Lonchera termica infantil", "cantidad": "2"}, {"nombre": "Luces de calabaza en cadena", "cantidad": "1"}, {"nombre": "Luces guirnalda navide\u00f1a vintage", "cantidad": "2"}, {"nombre": "Luces led solar 3m", "cantidad": "3"}, {"nombre": "Luces trasera,delantera y claxon para bicicleta", "cantidad": "1"}, {"nombre": "Luz de tienda portatil recargable", "cantidad": "1"}, {"nombre": "Machete halloween juguete", "cantidad": "2"}, {"nombre": "Manguera magica 15m", "cantidad": "1"}, {"nombre": "Manguera magica 7.5m", "cantidad": "1"}, {"nombre": "Mano plastica de esqueleto para pedir dulces halloween", "cantidad": "1"}, {"nombre": "Maquillaje blanco para disfraz", "cantidad": "9"}, {"nombre": "Maquillaje buena calidad halloween", "cantidad": "3"}, {"nombre": "Maquillaje chico 2 pinturas colmillo y sangre vampiro", "cantidad": "1"}, {"nombre": "Maquillaje grande 5 pinturas y accesorios de mounstruo", "cantidad": "1"}, {"nombre": "Maquillaje negro para disfraz", "cantidad": "16"}, {"nombre": "Marcador permanente", "cantidad": "10"}, {"nombre": "Mascara calavera y diadema con calaveritas", "cantidad": "8"}, {"nombre": "Mascara capucha Spiderman halloween", "cantidad": "6"}, {"nombre": "Mascara casa papel", "cantidad": "3"}, {"nombre": "Mascara da catrina con pelo sintetico", "cantidad": "1"}, {"nombre": "Mascara Darth Vader star wars", "cantidad": "1"}, {"nombre": "Mascara de batman", "cantidad": "1"}, {"nombre": "Mascara de payaso con luz", "cantidad": "1"}, {"nombre": "Mascara halloween calabaza", "cantidad": "1"}, {"nombre": "Mascara halloween calavera catrin", "cantidad": "2"}, {"nombre": "Mascara halloween calavera fosforecente", "cantidad": "2"}, {"nombre": "Mascara halloween conejo", "cantidad": "2"}, {"nombre": "Mascara halloween de latex diferentes mounstruos", "cantidad": "8"}, {"nombre": "Mascara halloween diablo, mimo, lobo y chucky", "cantidad": "3"}, {"nombre": "Mascara halloween Gran Gnomo", "cantidad": "1"}, {"nombre": "Mascara halloween Guason", "cantidad": "1"}, {"nombre": "Mascara halloween Hulk", "cantidad": "2"}, {"nombre": "Mascara halloween jack", "cantidad": "2"}, {"nombre": "Mascara halloween jason economica", "cantidad": "1"}, {"nombre": "Mascara halloween latex wolvering y jason con pelo", "cantidad": "1"}, {"nombre": "Mascara halloween opera", "cantidad": "8"}, {"nombre": "Mascara halloween pirata", "cantidad": "2"}, {"nombre": "Mascara halloween plastico Screem, Bruja, Vampiro", "cantidad": "5"}, {"nombre": "Mascara halloween Scream", "cantidad": "23"}, {"nombre": "Mascara halloween Scream con lengua", "cantidad": "20"}, {"nombre": "Mascara halloween V for Vendetta", "cantidad": "1"}, {"nombre": "Mascara halloween V for Vendetta con luz", "cantidad": "1"}, {"nombre": "Mascara halloween vampiro ojos saltones", "cantidad": "1"}, {"nombre": "Mascara purga con luz", "cantidad": "5"}, {"nombre": "Mascarillas", "cantidad": "12"}, {"nombre": "Matraca 1/2", "cantidad": "1"}, {"nombre": "Memoria micro SD 32 gb c10 Adata", "cantidad": "2"}, {"nombre": "Memoria micro SD 64 gb c10 Adata", "cantidad": "1"}, {"nombre": "Memoria Micro sd uhs-i3 Adata v30 c10", "cantidad": "3"}, {"nombre": "Memoria USB 64 GB Adata", "cantidad": "1"}, {"nombre": "Microfono doble inalambrico para cel tipo c Elegate", "cantidad": "2"}, {"nombre": "Microfono inalambrico para cel tipo c Buytiti", "cantidad": "1"}, {"nombre": "Mini carro monstruo de friccion", "cantidad": "1"}, {"nombre": "Mini consola nintendo 620 juegos", "cantidad": "-1"}, {"nombre": "Mini cubo rubik", "cantidad": "2"}, {"nombre": "Mini impresora termica bluetooth de gato", "cantidad": "1"}, {"nombre": "Mini lampara halloween calabaza", "cantidad": "23"}, {"nombre": "Mini lampara halloween mano esqueleto", "cantidad": "2"}, {"nombre": "Mini matraca 1/4", "cantidad": "1"}, {"nombre": "Mini pinza multiherramienta acero inox 11 en 1", "cantidad": "1"}, {"nombre": "Mini pistola de toques broma", "cantidad": "3"}, {"nombre": "Minibicicleta juguete", "cantidad": "1"}, {"nombre": "Minienfriador de aire acondicionado", "cantidad": "3"}, {"nombre": "Minilavadora portatil", "cantidad": "2"}, {"nombre": "Miniventilador Portatil recargable", "cantidad": "5"}, {"nombre": "Miniventilador Portatil Turbina recargable con pantalla", "cantidad": "4"}, {"nombre": "Monedero afelpado stich", "cantidad": "3"}, {"nombre": "Mouse inalambrico RGB recargable", "cantidad": "9"}, {"nombre": "Multicargador Universal LCD", "cantidad": "1"}, {"nombre": "Multicargador Universal Litio/AA/AAA/9v", "cantidad": "1"}, {"nombre": "Multicontacto 3 tomacorrientes 3 usb 1 tipo c 2m elegate", "cantidad": "1"}, {"nombre": "Multicontacto 6 tomacorrientes", "cantidad": "1"}, {"nombre": "Multicontacto bisagra triple", "cantidad": "2"}, {"nombre": "Multicontacto Buytiti cable 3M 4 switch", "cantidad": "2"}, {"nombre": "Multiherramienta llave perica 5 en 1", "cantidad": "1"}, {"nombre": "Multilector externo SD micro", "cantidad": "1"}, {"nombre": "Multimetro analogo", "cantidad": "2"}, {"nombre": "Mu\u00f1eca articulada tipo barbie vestido con lentejuelas y accesorios", "cantidad": "2"}, {"nombre": "Mu\u00f1eca chica con pony", "cantidad": "3"}, {"nombre": "Mu\u00f1eca my baby con mameluco de animales", "cantidad": "2"}, {"nombre": "Mu\u00f1eco antiestres", "cantidad": "1"}, {"nombre": "Mu\u00f1eco de nieve", "cantidad": "1"}, {"nombre": "Mu\u00f1eco de nieve navide\u00f1o con luz", "cantidad": "2"}, {"nombre": "Mu\u00f1eco navide\u00f1o barbon peque\u00f1o", "cantidad": "2"}, {"nombre": "Mu\u00f1eco vengadores", "cantidad": "1"}, {"nombre": "Navaja tipo Suiza", "cantidad": "8"}, {"nombre": "Nivelador con burbuja Maxtool", "cantidad": "2"}, {"nombre": "Organizador multifuncional de madera", "cantidad": "2"}, {"nombre": "Pantimedia termica", "cantidad": "2"}, {"nombre": "Papel picado grande dia de muertos", "cantidad": "2"}, {"nombre": "Paquete 100 cinchos", "cantidad": "1"}, {"nombre": "Paquete 12 abrazaderas diferentes tama\u00f1os", "cantidad": "1"}, {"nombre": "Paquete 4 esqueletos halloween", "cantidad": "3"}, {"nombre": "Paquete 4 pilas AA", "cantidad": "1"}, {"nombre": "Paquete 4 pilas AA 1Hora", "cantidad": "7"}, {"nombre": "Paquete 5 carritos camioneta", "cantidad": "1"}, {"nombre": "Paquete 6 carritos metalicos", "cantidad": "1"}, {"nombre": "Paquete barra de silicon delgada 10 pzs", "cantidad": "1"}, {"nombre": "Paquete barra de silicon gruesa 8 pzs", "cantidad": "2"}, {"nombre": "Paquete de cinchos largos", "cantidad": "3"}, {"nombre": "Paquete pilas AAA 1hora", "cantidad": "9"}, {"nombre": "Par de calcetines afelpados", "cantidad": "3"}, {"nombre": "Par de calcetines navide\u00f1os afelpados", "cantidad": "3"}, {"nombre": "Par de guantes chicos de esqueleto halloween", "cantidad": "2"}, {"nombre": "Paraguas Autom\u00e1tico Plegable", "cantidad": "1"}, {"nombre": "Paraguas plegable elegate", "cantidad": "3"}, {"nombre": "Parche Cargador inalambrico", "cantidad": "2"}, {"nombre": "Pasta termica", "cantidad": "3"}, {"nombre": "Pegatina navide\u00f1a", "cantidad": "3"}, {"nombre": "Peluca pirata cabello sintetico y pa\u00f1uelo", "cantidad": "1"}, {"nombre": "Peluche ballena", "cantidad": "3"}, {"nombre": "Peluche kuromi", "cantidad": "1"}, {"nombre": "Perfume locion atomizador cabello", "cantidad": "2"}, {"nombre": "Pesta\u00f1as naturales 10 pares", "cantidad": "1"}, {"nombre": "Pila de litio tama\u00f1o cr2025 3v", "cantidad": "5"}, {"nombre": "Pila LR1130 10 pzs", "cantidad": "40"}, {"nombre": "Pila Recargable AA 2 pzs", "cantidad": "2"}, {"nombre": "Pila Recargable AAA 2 pzs", "cantidad": "2"}, {"nombre": "Pintura halloween neon", "cantidad": "4"}, {"nombre": "Pintura spray para cabello", "cantidad": "8"}, {"nombre": "Pinturas maquillaje 8 colores halloween", "cantidad": "11"}, {"nombre": "Pinza corte electricista 6\"", "cantidad": "2"}, {"nombre": "Pinza de corte diagonal 4\"", "cantidad": "3"}, {"nombre": "Pinza de corte para electronica", "cantidad": "2"}, {"nombre": "Pinza de punta y corte 4\"", "cantidad": "3"}, {"nombre": "Pinza de punta y corte 4\" economica", "cantidad": "3"}, {"nombre": "Pinza electricista 6\"", "cantidad": "3"}, {"nombre": "Pinza multiherramienta y puntillas", "cantidad": "2"}, {"nombre": "PInzas de presion 10\" mordaza curva", "cantidad": "3"}, {"nombre": "Pinzas de presion 5\"", "cantidad": "3"}, {"nombre": "Pinzas de presion 7\"", "cantidad": "3"}, {"nombre": "Pistola de burbujas", "cantidad": "2"}, {"nombre": "Pistola de silicon", "cantidad": "4"}, {"nombre": "Placa con 2 contactos", "cantidad": "1"}, {"nombre": "Placa con apagador", "cantidad": "2"}, {"nombre": "Placa con apagador y contacto", "cantidad": "3"}, {"nombre": "Planilla maquillaje catrina adhesivo", "cantidad": "13"}, {"nombre": "Planilla maquillaje catrina pedreria adhesivo", "cantidad": "12"}, {"nombre": "Planilla maquillaje catrina pedreria adhesivo cara y cuello", "cantidad": "7"}, {"nombre": "Planilla pegatinas decoracion de paredes", "cantidad": "3"}, {"nombre": "Planilla Tato halloween", "cantidad": "3"}, {"nombre": "Plato doble de plastico para gato", "cantidad": "1"}, {"nombre": "Plug cargador carro 2 puertos", "cantidad": "2"}, {"nombre": "Plug cargador carro 2 puertos 1Hora", "cantidad": "1"}, {"nombre": "Plug cargador puerto usb y 2 tipo c con cable tipo c y v8 Moreka", "cantidad": "2"}, {"nombre": "Pluma cristales punta decorada", "cantidad": "2"}, {"nombre": "Powerbank 20000 mah Buitity", "cantidad": "5"}, {"nombre": "Prensa 4 pulgadas", "cantidad": "2"}, {"nombre": "Prensa mini 1 pulgada", "cantidad": "2"}, {"nombre": "Pulsera cristales con pompon y mano de fatima", "cantidad": "1"}, {"nombre": "Pulsera de hilo y shakira", "cantidad": "4"}, {"nombre": "Pulsera San Benito", "cantidad": "2"}, {"nombre": "Pulsera tejida zigzag", "cantidad": "5"}, {"nombre": "Raqueta matamosquitos", "cantidad": "4"}, {"nombre": "Rastrillos 4 repuestos max speed", "cantidad": "1"}, {"nombre": "Rayador cortador rebanador", "cantidad": "2"}, {"nombre": "Receptor musica bluetooth", "cantidad": "24"}, {"nombre": "Receptor musica bluetooth BT-450", "cantidad": "1"}, {"nombre": "Regadera redonda", "cantidad": "2"}, {"nombre": "Reloj despertador astronauta con luz", "cantidad": "2"}, {"nombre": "Reloj despertador peque\u00f1o", "cantidad": "2"}, {"nombre": "Reloj despertador robot", "cantidad": "1"}, {"nombre": "Reloj Pulsera Infantil", "cantidad": "6"}, {"nombre": "Rimel para pesta\u00f1as", "cantidad": "1"}, {"nombre": "Rodillera elastica proteccion ortopedica", "cantidad": "12"}, {"nombre": "Rompecabezas de fomy", "cantidad": "3"}, {"nombre": "Rotomartillo Maxtool 500w", "cantidad": "1"}, {"nombre": "Sangre falsa con jeringa", "cantidad": "1"}, {"nombre": "Scooter P1 max", "cantidad": "1"}, {"nombre": "Serie 100 luces led con musica", "cantidad": "1"}, {"nombre": "Serie de luces de calavera catrina", "cantidad": "2"}, {"nombre": "Set cuchillos 6 pzs colores", "cantidad": "1"}, {"nombre": "Set de globos halloween", "cantidad": "8"}, {"nombre": "Set Manicure pedicure", "cantidad": "3"}, {"nombre": "Sierra halloween juguete", "cantidad": "1"}, {"nombre": "Silla plegable elegate", "cantidad": "1"}, {"nombre": "Smart Bracelet", "cantidad": "5"}, {"nombre": "Smart Watch", "cantidad": "2"}, {"nombre": "Smartwatch c900 pro max 2 correas", "cantidad": "1"}, {"nombre": "Smartwatch i8 pro max", "cantidad": "1"}, {"nombre": "Smartwatch redondo con camara y porta sim", "cantidad": "1"}, {"nombre": "Smartwatch Series 8 T900", "cantidad": "1"}, {"nombre": "Smartwatch T500", "cantidad": "1"}, {"nombre": "Smartwatch T900 pro max", "cantidad": "1"}, {"nombre": "Sombrero de paja", "cantidad": "1"}, {"nombre": "Sombrero de bruja con pelo sintetico halloween", "cantidad": "4"}, {"nombre": "Sombrero de brujita", "cantidad": "1"}, {"nombre": "Sombrero halloween catrina", "cantidad": "3"}, {"nombre": "Sombrero halloween mini pirata", "cantidad": "1"}, {"nombre": "Soporte adhesivo de frutas con ganchos", "cantidad": "2"}, {"nombre": "Soporte ajustable para cel moreka", "cantidad": "5"}, {"nombre": "Soporte base ajustable para cel o tablet", "cantidad": "6"}, {"nombre": "Soporte brazo flexible de cel para auto", "cantidad": "2"}, {"nombre": "Soporte clip para cel 3 en 1", "cantidad": "2"}, {"nombre": "Soporte de cel con cargador para moto", "cantidad": "1"}, {"nombre": "Soporte de cel de retrovisor para auto", "cantidad": "6"}, {"nombre": "Soporte de celular con paraguas para moto", "cantidad": "2"}, {"nombre": "Soporte de celular para bicicleta", "cantidad": "1"}, {"nombre": "Soporte magnetico 360\u00ba 1Hora para cel", "cantidad": "3"}, {"nombre": "Soporte magnetico base redonda 360\u00ba", "cantidad": "4"}, {"nombre": "Soporte manubrio para cel moto y bici buytiti", "cantidad": "1"}, {"nombre": "Soporte metalico ajustable para cel moto y bici moreka", "cantidad": "1"}, {"nombre": "Soporte metalico plegable base giratoria", "cantidad": "6"}, {"nombre": "Soporte metalico plegable base giratoria buytiti", "cantidad": "2"}, {"nombre": "Squishi con luz de calabaza", "cantidad": "1"}, {"nombre": "Squishi con luz y cordon", "cantidad": "4"}, {"nombre": "Stickers de gel halloween", "cantidad": "2"}, {"nombre": "Taladro inalambrico destornillador", "cantidad": "1"}, {"nombre": "Tapete para mouse y teclado", "cantidad": "1"}, {"nombre": "Telara\u00f1a halloween con tarantulas", "cantidad": "3"}, {"nombre": "Telara\u00f1a halloween con tarantulas chica", "cantidad": "3"}, {"nombre": "Telara\u00f1a halloween con tarantulas mediana", "cantidad": "2"}, {"nombre": "Telefono juguete forma de bolso, corazon o capibara", "cantidad": "2"}, {"nombre": "Temporizador digital con interruptor y tomacorriente", "cantidad": "1"}, {"nombre": "Tenaza metalica", "cantidad": "7"}, {"nombre": "Termo", "cantidad": "2"}, {"nombre": "Termo 1000 ml acero inoxidable", "cantidad": "1"}, {"nombre": "Termo con taza 500 ml", "cantidad": "1"}, {"nombre": "Tijera mediana multiusos", "cantidad": "1"}, {"nombre": "Tijera para cortar lamina", "cantidad": "1"}, {"nombre": "Tijeras acero inox con mango grande", "cantidad": "1"}, {"nombre": "Tijeras de acero inox para costura", "cantidad": "1"}, {"nombre": "Tijeras para podar arboles", "cantidad": "3"}, {"nombre": "Timbre inalambrico con luz rgb", "cantidad": "1"}, {"nombre": "Tira de luces led de pilas 10 leds", "cantidad": "1"}, {"nombre": "Transmisor fm bluetooth 2 puertos usb 1 tipo c", "cantidad": "1"}, {"nombre": "Transmisor Receptor bluetooth", "cantidad": "2"}, {"nombre": "Trapeador magico", "cantidad": "1"}, {"nombre": "Trinche diablo halloween", "cantidad": "3"}, {"nombre": "Tubo sangre falsa", "cantidad": "2"}, {"nombre": "Vainilla Xofia 250 ml", "cantidad": "2"}, {"nombre": "Vara de incienso copal", "cantidad": "15"}, {"nombre": "Vaso calavera", "cantidad": "22"}, {"nombre": "Vaso calavera shot", "cantidad": "18"}, {"nombre": "Vaso tequilero calavera", "cantidad": "5"}, {"nombre": "Vela de plastico con luz", "cantidad": "1"}, {"nombre": "Vela dia de muertos craneo", "cantidad": "4"}, {"nombre": "Vela electronica efecto cera", "cantidad": "7"}, {"nombre": "Vela mini electronica", "cantidad": "10"}, {"nombre": "Vela tea light aromatica", "cantidad": "3"}, {"nombre": "Vela virgen de guadalupe electronica", "cantidad": "2"}, {"nombre": "Veladora dia de muertos waldos", "cantidad": "1"}, {"nombre": "Ventilador de techo con lu led y control", "cantidad": "1"}, {"nombre": "Vibrador", "cantidad": "1"}, {"nombre": "Waflera corazon", "cantidad": "1"}];
+
+/* ============================================================
+   Arranque real
+   ============================================================ */
+boot();
+</script>
+</body>
+</html>
