@@ -525,14 +525,7 @@ const ANIMS = ['idle','blink','happy','angry','furia','sad','surprised','sleepy'
 // cada 'key' busca primero audio/<key>.mp3; si no existe, cae a ElevenLabs en vivo, luego voz navegador.
 const GREETINGS = {
   familiar: [
-    { key: 'familiar_saludo_01', text: 'Te puedo ver... no corras, apenas empezamos.', emo: 'suspicious' },
-    { key: 'familiar_saludo_02', text: 'Ya te vi...', emo: 'suspicious' },
-    { key: 'familiar_saludo_03', text: 'Te miro el alma... y también si traes cambio para el dulce.', emo: 'evil' },
-    { key: 'familiar_saludo_04', text: 'Oh, un visitante. Hacía años que no parpadeaba de la emoción.', emo: 'happy' },
-    { key: 'familiar_saludo_05', text: 'Un alma más se acerca al puesto.', emo: 'possessed' },
-    { key: 'familiar_saludo_06', text: '¿Buscas ofertas o buscas problemas? Aquí hay de los dos.', emo: 'curioso' },
-    { key: 'familiar_saludo_07', text: 'No hay descuentos, pero sí sustos gratis.', emo: 'riendo' },
-    { key: 'familiar_saludo_08', text: 'Alguien despertó a la máscara. Espero que no te arrepientas.', emo: 'glitch' },
+   
   ],
   troll: [
     { key: 'troll_saludo_01', text: 'Ay no, otro que viene a grabar video en vez de comprar.', emo: 'evil' },
@@ -574,7 +567,7 @@ const AUDIO_POOLS_CONFIG = {
   situ_regateo:  { folder: 'audio/situ_regateo',  tope: 0, emotions: ['suspicious','riendo','travieso'] },
   situ_venta:    { folder: 'audio/situ_venta',    tope: 0, emotions: ['curioso','evil','glitch'] },
   fx_terror:     { folder: 'audio/fx_terror',     tope: 0, emotions: ['evil','glitch','possessed','estatico','membrana','furia'] },
-  greet_familiar:     { folder: 'audio/greet_familiar',     tope: 0, emotions: ['happy','curioso','suspicious','travieso'] },
+  greet_familiar:     { folder: 'audio/greet_familiar',     tope: 5, emotions: ['happy','curioso','suspicious','travieso'] },
   greet_troll:        { folder: 'audio/greet_troll',        tope: 4, emotions: ['evil','riendo','possessed','glitch','siniestro'] },
   despedida_familiar: { folder: 'audio/despedida_familiar', tope: 0, emotions: ['sleepy','sad','idle'] },
   despedida_troll:    { folder: 'audio/despedida_troll',    tope: 0, emotions: ['riendo','evil','possessed','escalofrio'] },
