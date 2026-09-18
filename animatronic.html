@@ -1447,7 +1447,7 @@ function scheduleAuto() {
   if(!S.autoMode) return;
   const pick = ANIMS[Math.floor(Math.random()*ANIMS.length)];
   setEmotion(pick);
-  S.autoTimer = setTimeout(scheduleAuto, 4200 + Math.random()*2800);
+  S.autoTimer = setTimeout(scheduleAuto, 10200 + Math.random()*2800);
 }
 
 function toggleAutoGreet() {
