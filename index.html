@@ -117,6 +117,14 @@
   .price-header{display:flex;gap:8px;padding:6px 4px;font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em;border-bottom:1px solid var(--border);}
   .price-header .pname{flex:1;}
   .price-header .pval{width:64px;text-align:right;flex-shrink:0;}
+  .view-toggle-row{display:flex;justify-content:flex-end;margin-bottom:8px;}
+  .grid-wrap{display:grid;grid-template-columns:repeat(auto-fill, minmax(var(--tile-size,110px), 1fr));gap:8px;margin-top:8px;}
+  .grid-tile{position:relative;aspect-ratio:1/1;border-radius:10px;overflow:hidden;background:var(--surface-2);border:1px solid var(--border);cursor:pointer;}
+  .grid-tile img{width:100%;height:100%;object-fit:cover;display:block;}
+  .grid-tile .grid-name{position:absolute;left:0;right:0;bottom:0;background:linear-gradient(transparent, rgba(0,0,0,0.72));color:#fff;font-size:11px;padding:16px 6px 5px;line-height:1.2;}
+  .grid-tile.no-photo{display:flex;align-items:center;justify-content:center;padding:8px;}
+  .grid-tile.no-photo .grid-name{position:static;background:none;color:var(--text);padding:0;text-align:center;font-size:12px;}
+  .grid-star{position:absolute;top:4px;right:4px;background:rgba(0,0,0,0.45);border:none;color:#fff;width:24px;height:24px;border-radius:50%;font-size:13px;display:flex;align-items:center;justify-content:center;padding:0;}
 </style>
 </head>
 <body>
@@ -155,11 +163,13 @@
     <div id="ventaSection">
       <div class="card">
         <div class="favoritos-row" id="favoritosRow" style="display:none;"></div>
+        <div class="view-toggle-row"><button class="btn-compact" id="viewToggleBtn" type="button" style="flex:none;">🖼 Vista catálogo</button></div>
         <div class="search-box">
           <label for="searchInput">Buscar producto</label>
           <input type="text" id="searchInput" placeholder="Ej. cable usb tipo c" autocomplete="off">
         </div>
         <div class="results" id="resultsList" style="display:none;"></div>
+        <div class="grid-wrap" id="gridResults" style="display:none;"></div>
         <div class="manual-link" id="manualLink">+ No está en la lista, registrar manual</div>
       </div>
 
@@ -237,6 +247,13 @@
     <div class="field"><label for="themeSelect">Tema de color</label><select id="themeSelect"></select></div>
     <div class="field-row"><input type="checkbox" id="favToggle"><label for="favToggle" style="font-size:14px;color:var(--text);">Mostrar favoritos arriba del buscador</label></div>
     <div class="field-row"><input type="checkbox" id="socioBtnToggle"><label for="socioBtnToggle" style="font-size:14px;color:var(--text);">Mostrar botón de copiar socio (col J)</label></div>
+    <div class="field" style="margin-top:10px;"><label for="tileSizeSelect">Tamaño de foto en catálogo</label>
+      <select id="tileSizeSelect">
+        <option value="80">Chico</option>
+        <option value="110">Mediano</option>
+        <option value="150">Grande</option>
+      </select>
+    </div>
   </div>
 </div>
 
@@ -427,6 +444,15 @@ function setupOptionsPanel(){
     storageSet("rv_show_socio_btn", socioToggle.checked);
     applySocioBtnVisibility(socioToggle.checked);
   });
+
+  const tileSel = document.getElementById("tileSizeSelect");
+  const savedTile = storageGet("rv_tile_size", "110");
+  tileSel.value = savedTile;
+  document.documentElement.style.setProperty("--tile-size", savedTile + "px");
+  tileSel.addEventListener("change", ()=>{
+    storageSet("rv_tile_size", tileSel.value);
+    document.documentElement.style.setProperty("--tile-size", tileSel.value + "px");
+  });
 }
 function applySocioBtnVisibility(show){
   document.getElementById("btnCopySocio").style.display = show ? "block" : "none";
@@ -518,6 +544,7 @@ function loadInventory(){
     document.getElementById("statusText").textContent = products.length + " productos (lista de prueba, sin Modelo/Costo)";
     document.getElementById("mainApp").style.display = "block";
     document.getElementById("footerBar").style.display = "block";
+    applyCatalogView();
     return;
   }
   Papa.parse(CONFIG.csvUrl, {
@@ -542,6 +569,7 @@ function loadInventory(){
       document.getElementById("statusText").textContent = products.length + " productos cargados";
       document.getElementById("mainApp").style.display = "block";
       document.getElementById("footerBar").style.display = "block";
+      applyCatalogView();
     },
     error: function(){ showLoadError("No pude descargar el catálogo. Revisa tu conexión o el link publicado."); }
   });
@@ -652,12 +680,68 @@ function calcularPrecios(costo){
    Buscador de venta
    ============================================================ */
 document.getElementById("searchInput").addEventListener("input", function(e){
-  renderResultsGeneric(e.target.value, "resultsList", "manualLink", "venta");
+  if(catalogView === "grid"){ renderGrid(e.target.value); }
+  else { renderResultsGeneric(e.target.value, "resultsList", "manualLink", "venta"); }
 });
 document.getElementById("manualLink").addEventListener("click", function(){
   const q = document.getElementById("searchInput").value;
   openForm(null, q);
 });
+
+let catalogView = storageGet("rv_catalog_view", "lista");
+function applyCatalogView(){
+  const btn = document.getElementById("viewToggleBtn");
+  if(catalogView === "grid"){
+    btn.textContent = "📋 Vista lista";
+    document.getElementById("resultsList").style.display = "none";
+    renderGrid(document.getElementById("searchInput").value);
+    document.getElementById("gridResults").style.display = "grid";
+  } else {
+    btn.textContent = "🖼 Vista catálogo";
+    document.getElementById("gridResults").style.display = "none";
+    document.getElementById("gridResults").innerHTML = "";
+    renderResultsGeneric(document.getElementById("searchInput").value, "resultsList", "manualLink", "venta");
+  }
+}
+document.getElementById("viewToggleBtn").addEventListener("click", ()=>{
+  catalogView = catalogView === "grid" ? "lista" : "grid";
+  storageSet("rv_catalog_view", catalogView);
+  applyCatalogView();
+});
+
+function renderGrid(query){
+  const grid = document.getElementById("gridResults");
+  const q = normalize(query);
+  const words = q.split(/\s+/).filter(Boolean);
+  const pool = productosVisibles().filter(p=>{
+    if(words.length === 0) return true;
+    const n = normalize(p.nombre);
+    return words.every(w => n.includes(w));
+  });
+  grid.innerHTML = "";
+  pool.forEach(p=>{
+    const slug = slugify(p.nombre);
+    const tile = document.createElement("div");
+    tile.className = "grid-tile";
+    tile.innerHTML =
+      '<img class="grid-thumb">' +
+      '<div class="grid-name"></div>' +
+      '<button class="grid-star" type="button"></button>';
+    const img = tile.querySelector(".grid-thumb");
+    img.dataset.slug = slug; img.dataset.tried = "jpg";
+    img.src = CONFIG.imagesFolder + slug + ".jpg";
+    img.onerror = ()=>{
+      if(img.dataset.tried === "jpg"){ img.dataset.tried = "png"; img.src = CONFIG.imagesFolder + slug + ".png"; }
+      else { img.remove(); tile.classList.add("no-photo"); }
+    };
+    tile.querySelector(".grid-name").textContent = p.nombre;
+    const starBtn = tile.querySelector(".grid-star");
+    starBtn.textContent = favoritos.includes(p.nombre) ? "★" : "☆";
+    starBtn.addEventListener("click", (e)=>{ e.stopPropagation(); toggleFavorito(p.nombre); starBtn.textContent = favoritos.includes(p.nombre) ? "★" : "☆"; });
+    tile.addEventListener("click", ()=> openForm(p, ""));
+    grid.appendChild(tile);
+  });
+}
 
 function renderResultsGeneric(query, listId, manualLinkId, mode){
   const list = document.getElementById(listId);
