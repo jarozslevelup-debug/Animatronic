@@ -967,15 +967,29 @@ document.getElementById("cartExpandBtn").addEventListener("click", ()=>{
 });
 document.getElementById("btnCobrar").addEventListener("click", ()=>{
   if(cart.length === 0) return;
-  cart.forEach(c=> todaySales.push(c));
+  const ventaId = (window.crypto && typeof window.crypto.randomUUID === "function")
+    ? window.crypto.randomUUID()
+    : ("V-" + uid() + "-" + Date.now().toString(36));
+  const snapshot = cart.map(c => ({...c, ventaId}));
+  snapshot.forEach(c=> todaySales.push(c));
   persistToday();
-  const n = cart.length;
-  const total = cart.reduce((a,c)=>a+c.total,0);
+  const n = snapshot.length;
+  const total = snapshot.reduce((a,c)=>a+c.total,0);
+  const detail = {
+    ventaId,
+    total,
+    items: snapshot.map(({foto, ...resto}) => resto),
+    fecha: snapshot[0]?.fecha || todayISO(),
+    canal: snapshot[0]?.canal || document.getElementById("canalSelect").value,
+    sessionCanal: document.getElementById("canalSelect").value,
+    vendedor: snapshot[0]?.socio || document.getElementById("vendedorInput").value.trim()
+  };
   cart = [];
   persistCart();
   renderCart();
   renderToday();
   showToast(n + (n===1?" venta registrada":" ventas registradas") + " · " + money(total));
+  document.dispatchEvent(new CustomEvent("rv:sale-completed", {detail}));
 });
 
 /* ============================================================
@@ -1070,5 +1084,7 @@ const EMBEDDED_PRODUCTS = [{"nombre": "Abanico de plastico", "cantidad": "10"}, 
    ============================================================ */
 boot();
 </script>
+<script src="folios_v2.js"></script>
+<script src="halloween.js"></script>
 </body>
 </html>
