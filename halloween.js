@@ -8,7 +8,7 @@
 (function(root){
   'use strict';
 
-  const APP_VERSION = '0.1.0';
+  const APP_VERSION = '0.2.0';
   const DB_NAME = 'halloween_2026';
   const DB_VERSION = 1;
   const STORES = Object.freeze({
@@ -71,6 +71,12 @@
     const a = new Uint8Array(16); root.crypto.getRandomValues(a); a[6]=(a[6]&15)|64; a[8]=(a[8]&63)|128;
     const h=[...a].map(x=>x.toString(16).padStart(2,'0')).join('');
     return `${h.slice(0,8)}-${h.slice(8,12)}-${h.slice(12,16)}-${h.slice(16,20)}-${h.slice(20)}`;
+  }
+  function sanitizeItems(items){
+    return (Array.isArray(items)?items:[]).map(x=>({
+      nombre:String(x?.nombre||'').trim(), cantidad:Number(x?.cantidad)||0, precio:Number(x?.precio)||0,
+      total:Number(x?.total)||0, canal:String(x?.canal||''), fecha:String(x?.fecha||''), vendedor:String(x?.socio||x?.vendedor||'')
+    })).filter(x=>x.nombre);
   }
 
   function openDb(){
@@ -179,18 +185,31 @@
   }
 
   async function captureSale(detail){
+    const items=sanitizeItems(detail.items);
     const sale={
       ventaId:String(detail.ventaId), fecha:detail.fecha||nowIso(), total:Number(detail.total)||0,
-      canal:detail.canal||'', vendedor:detail.vendedor||'', itemsCount:Array.isArray(detail.items)?detail.items.length:0,
+      canal:detail.canal||'', vendedor:detail.vendedor||'', itemsCount:items.length, items,
       allocations:[], unallocated:Number(detail.total)||0, anonymousCardsDelivered:0, closed:false, createdAt:nowIso()
     };
     const tx=db.transaction([STORES.SALES],'readwrite');
-    const st=tx.objectStore(STORES.SALES); const old=await reqPromise(st.get(sale.ventaId)); if(!old) st.add(sale); await txPromise(tx);
-    return old?clone(old):clone(sale);
+    const st=tx.objectStore(STORES.SALES); const old=await reqPromise(st.get(sale.ventaId));
+    if(!old) st.add(sale);
+    else if((!Array.isArray(old.items)||old.items.length===0) && items.length){ old.items=items; old.itemsCount=items.length; st.put(old); }
+    await txPromise(tx);
+    return old?clone({...old,items:(old.items?.length?old.items:items),itemsCount:(old.items?.length?old.items.length:items.length)}):clone(sale);
   }
 
   async function getSale(ventaId){
     const tx=db.transaction([STORES.SALES],'readonly'); const s=await reqPromise(tx.objectStore(STORES.SALES).get(String(ventaId))); await txPromise(tx); return s?clone(s):null;
+  }
+
+  async function getJackSales(codigo){
+    const code=normalizeCode(codigo); if(!code)return [];
+    const tx=db.transaction([STORES.SALES],'readonly'); const rows=await reqPromise(tx.objectStore(STORES.SALES).getAll()); await txPromise(tx);
+    return rows.filter(s=>(s.allocations||[]).some(a=>normalizeCode(a.codigo)===code)).map(s=>{
+      const mine=(s.allocations||[]).filter(a=>normalizeCode(a.codigo)===code);
+      return {...clone(s), aplicado:mine.reduce((a,x)=>a+Number(x.monto||0),0), misPartes:clone(mine)};
+    }).sort((a,b)=>String(b.fecha||b.createdAt).localeCompare(String(a.fecha||a.createdAt)));
   }
 
   async function saveSale(s){
@@ -204,7 +223,7 @@
     return null;
   }
 
-  async function applyAllocation({ventaId,codigo,monto,nuevo=false}){
+  async function applyAllocation({ventaId,codigo,monto,nuevo}){
     if(!writerLock.owned) throw new Error('Esta pestaña no tiene permiso de escritura Halloween.');
     const sale=await getSale(ventaId); if(!sale) throw new Error('Venta Halloween no encontrada.');
     const amount=Number(monto);
@@ -213,10 +232,12 @@
     const code=normalizeCode(codigo); if(!code) throw new Error('Escribe el código Jack.');
     const val=await Folios.validar(code);
     if(!val.existe) throw new Error('Ese Jack no existe en el lote impreso.');
+    if(nuevo===undefined || nuevo===null) nuevo = val.estado==='impresa';
     if(nuevo && amount<config.compraMinJack) throw new Error(`Para activar Jack se requieren al menos ${money(config.compraMinJack)}.`);
     if(nuevo && val.estado!=='impresa') throw new Error(`Ese Jack no está disponible para activar (${val.estado}).`);
     if(!nuevo && val.estado!=='entregada') throw new Error(`Ese Jack no está activo (${val.estado}).`);
 
+    const nivelAntes=val.nivel||null;
     const partId=`${sale.ventaId}:${String(sale.allocations.length+1).padStart(2,'0')}`;
     const op={id:uuid(),tipo:'aplicar_venta',estado:'pendiente',ventaId:sale.ventaId,partId,codigo:code,monto:amount,nuevo,creadoEn:nowIso()};
     {
@@ -233,15 +254,14 @@
     await addEvent({tipo:nuevo?'jack_activado':'venta_acumulada',ventaId:sale.ventaId,partId,codigo:code,monto:amount,acumulado:result.acumulado,nivel:result.nivel});
     op.estado='completada'; op.completadoEn=nowIso();
     { const tx=db.transaction([STORES.OPS],'readwrite'); tx.objectStore(STORES.OPS).put(op); await txPromise(tx); }
-    return {result,profile:p,sale:await getSale(ventaId),cardsOwed:Math.max(0,Math.floor(Number(result.acumulado||0)/config.cartaCada)-Number(p.freeDelivered||0))};
+    return {result,profile:p,sale:await getSale(ventaId),nuevo,nivelAntes,nivelDespues:result.nivel||null,cardsOwed:Math.max(0,Math.floor(Number(result.acumulado||0)/config.cartaCada)-Number(p.freeDelivered||0))};
   }
 
   async function closeSaleWithoutJack(ventaId){
     const sale=await getSale(ventaId); if(!sale) return null;
     sale.closed=true; await saveSale(sale);
-    const cards=Math.floor(Number(sale.unallocated||0)/config.cartaCada);
-    await addEvent({tipo:'venta_sin_jack',ventaId:sale.ventaId,monto:sale.unallocated,cartas:cards});
-    return {sale,cardsOwed:Math.max(0,cards-Number(sale.anonymousCardsDelivered||0))};
+    await addEvent({tipo:'venta_sin_jack',ventaId:sale.ventaId,monto:sale.unallocated,cartas:0});
+    return {sale,cardsOwed:0};
   }
 
   async function listInventory(){
@@ -359,11 +379,15 @@
   }
 
   async function auditTSV(){
-    const tx=db.transaction([STORES.EVENTS],'readonly'); const ev=await reqPromise(tx.objectStore(STORES.EVENTS).getAll()); await txPromise(tx);
-    const head=['Fecha','Evento','VentaID','ParteID','Jack','Monto','Acumulado','Nivel','Cartas'];
-    const rows=ev.sort((a,b)=>String(a.fecha).localeCompare(String(b.fecha))).map(e=>[
-      e.fecha||'',e.tipo||'',e.ventaId||'',e.partId||'',e.codigo||'',e.monto??'',e.acumulado??'',e.nivel||'',(e.cardIds||[]).join(',')
-    ]);
+    const tx=db.transaction([STORES.EVENTS,STORES.SALES],'readonly');
+    const [ev,sales]=await Promise.all([reqPromise(tx.objectStore(STORES.EVENTS).getAll()),reqPromise(tx.objectStore(STORES.SALES).getAll())]); await txPromise(tx);
+    const saleMap=new Map(sales.map(x=>[String(x.ventaId),x]));
+    const head=['Fecha','Evento','VentaID','ParteID','Jack','Monto','Acumulado','Nivel','Cartas','Productos'];
+    const rows=ev.sort((a,b)=>String(a.fecha).localeCompare(String(b.fecha))).map(e=>{
+      const sale=saleMap.get(String(e.ventaId||''));
+      const productos=(sale?.items||[]).map(i=>`${i.nombre} x${i.cantidad} @${Number(i.precio||0).toFixed(2)}`).join(' | ');
+      return [e.fecha||'',e.tipo||'',e.ventaId||'',e.partId||'',e.codigo||'',e.monto??'',e.acumulado??'',e.nivel||'',(e.cardIds||[]).join(','),productos];
+    });
     return [head,...rows].map(r=>r.join('\t')).join('\n');
   }
 
@@ -379,12 +403,26 @@
     return recovered;
   }
 
+  async function clearFoliosForTests(){
+    const d=await new Promise((resolve,reject)=>{ const r=indexedDB.open('folios_HW2026'); r.onsuccess=()=>resolve(r.result); r.onerror=()=>reject(r.error||new Error('No se pudo abrir Folios')); });
+    const stores=['folios','meta','ventas'].filter(x=>d.objectStoreNames.contains(x));
+    if(stores.length){ const tx=d.transaction(stores,'readwrite'); for(const name of stores)tx.objectStore(name).clear(); await txPromise(tx); }
+    d.close();
+  }
+
+  async function resetSeasonForTests(){
+    if(!writerLock.owned) throw new Error('Esta pestaña no tiene permiso de escritura Halloween.');
+    const names=Object.values(STORES); const tx=db.transaction(names,'readwrite'); for(const name of names)tx.objectStore(name).clear(); await txPromise(tx);
+    config={...DEFAULT_CONFIG}; await metaSet('config',config); await ensureInventory(); await clearFoliosForTests();
+    return {ok:true};
+  }
+
   async function configure(patch){ config={...config,...patch}; await metaSet('config',config); return clone(config); }
 
   const Core=Object.freeze({
     init:initCore,configure,get config(){return clone(config);},levels:LEVELS,cards:DEFAULT_CARDS,
-    captureSale,getSale,applyAllocation,closeSaleWithoutJack,getProfile,jackSnapshot,listInventory,setInventory,registerDraw,registerQuickCards,
-    markCatrina,saveReportedOwned,redeem,summary,exportAll,auditTSV,reconcileOps,acquireWriterLock,folioHasSale
+    captureSale,getSale,getJackSales,applyAllocation,closeSaleWithoutJack,getProfile,jackSnapshot,listInventory,setInventory,registerDraw,registerQuickCards,
+    markCatrina,saveReportedOwned,redeem,summary,exportAll,auditTSV,reconcileOps,acquireWriterLock,folioHasSale,resetSeasonForTests
   });
   root.Halloween2026=Core;
 
@@ -410,16 +448,17 @@
   function injectUI(){
     const headerIcons=document.querySelector('.header-icons');
     if(headerIcons&&!document.getElementById('btnHalloweenMode')){
-      const b=document.createElement('button'); b.id='btnHalloweenMode'; b.className='icon-btn'; b.type='button'; b.title='Modo Halloween'; b.textContent='🎃';
+      const b=document.createElement('button'); b.id='btnHalloweenMode'; b.className='icon-btn'; b.type='button'; b.title='Halloween 2026'; b.textContent='🎃'; b.style.display='none';
       b.addEventListener('click',openDashboard); headerIcons.appendChild(b);
     }
+
     const saleOverlay=document.createElement('div'); saleOverlay.id='hwSaleOverlay'; saleOverlay.className='overlay hw-overlay'; saleOverlay.style.display='none'; saleOverlay.innerHTML=`
-      <div class="overlay-card hw-wide"><div class="overlay-header"><strong>🎃 Halloween · aplicar venta</strong><button class="close-x" id="hwSaleClose">✕</button></div>
+      <div class="overlay-card hw-wide"><div class="overlay-header"><strong>🎃 Halloween · Jack</strong><button class="close-x" id="hwSaleClose">✕</button></div>
       <div id="hwSaleBody"></div></div>`; document.body.appendChild(saleOverlay);
     document.getElementById('hwSaleClose').onclick=()=>{ saleOverlay.style.display='none'; };
 
     const draw=document.createElement('div'); draw.id='hwDrawOverlay'; draw.className='overlay hw-overlay'; draw.style.display='none'; draw.innerHTML=`
-      <div class="overlay-card hw-wide"><div class="overlay-header"><strong>🃏 Registrar lo que salió de la urna</strong><button class="close-x" id="hwDrawClose">✕</button></div>
+      <div class="overlay-card hw-wide"><div class="overlay-header"><strong>🃏 Registrar cartas de la urna</strong><button class="close-x" id="hwDrawClose">✕</button></div>
       <div id="hwDrawIntro" class="hw-muted"></div><div id="hwCardGrid" class="hw-cardgrid"></div>
       <div class="total-line"><span>Seleccionadas</span><strong id="hwDrawCount">0/0</strong></div>
       <button class="btn-primary" id="hwDrawConfirm">Confirmar cartas</button>
@@ -434,17 +473,54 @@
       <div id="hwSystemStatus" class="hw-muted"></div>
       <div class="hw-grid" id="hwStats"></div>
       <div class="hw-section"><strong>Buscar Jack</strong><div class="hw-line" style="margin-top:8px;"><input id="hwLookupCode" type="text" placeholder="H26-XXXXXX"><button class="btn-secondary" id="hwLookupBtn">Buscar</button></div><div id="hwJackPanel"></div></div>
-      <div class="hw-section"><strong>Inventario de urna</strong><div class="hw-muted">3:2:1 físico: por cada carga base, 3 de cada común, 2 de cada rara y 1 de cada épica.</div><div id="hwInventoryPanel"></div></div>
-      <div class="hw-section"><strong>Administración</strong>
-        <div class="hw-line" style="margin-top:8px;"><input id="hwBatchCount" type="number" min="1" value="50"><button class="btn-secondary" id="hwGenerateBatch">Generar lote Jack</button></div>
-        <button class="btn-secondary btn-block" id="hwBackupBtn" style="margin-top:8px;">💾 Descargar respaldo completo</button>
-        <button class="btn-secondary btn-block" id="hwAuditBtn" style="margin-top:8px;">📋 Copiar auditoría para hoja</button>
-      </div></div>`; document.body.appendChild(dash);
-    document.getElementById('hwDashClose').onclick=()=>dash.style.display='none';
+      <div class="hw-muted" style="margin-top:14px;">Configuración, inventario, lotes y respaldos están en ⚙️ Opciones.</div>
+      </div>`; document.body.appendChild(dash);
+    document.getElementById('hwDashClose').onclick=()=>{dash.style.display='none'; document.getElementById('btnHalloweenMode')?.classList.remove('active');};
     document.getElementById('hwLookupBtn').onclick=lookupJack;
-    document.getElementById('hwGenerateBatch').onclick=generateBatch;
-    document.getElementById('hwBackupBtn').onclick=downloadBackup;
-    document.getElementById('hwAuditBtn').onclick=copyAudit;
+
+    const mount=document.getElementById('hwOptionsMount');
+    if(mount){
+      mount.innerHTML=`<div id="hwOptionsSection" style="display:none;">
+        <div class="section-title">🎃 Halloween 2026</div>
+        <details id="hwInvDetails" class="card" style="padding:12px;margin-bottom:8px;">
+          <summary style="cursor:pointer;font-weight:700;">Cartas e inventario</summary>
+          <div class="hw-muted" style="margin-top:6px;">Configuración interna de las 17 cartas normales. No aparece durante una venta.</div>
+          <div id="hwInventoryPanel" style="margin-top:8px;"></div>
+        </details>
+        <details class="card" style="padding:12px;margin-bottom:8px;">
+          <summary style="cursor:pointer;font-weight:700;">Jacks, respaldo y auditoría</summary>
+          <div class="hw-line" style="margin-top:10px;"><input id="hwBatchCount" type="number" min="1" value="50"><button class="btn-secondary" id="hwGenerateBatch">Generar lote Jack</button></div>
+          <button class="btn-secondary btn-block" id="hwBackupBtn" style="margin-top:8px;">💾 Descargar respaldo completo</button>
+          <button class="btn-secondary btn-block" id="hwAuditBtn" style="margin-top:8px;">📋 Copiar auditoría para hoja</button>
+        </details>
+        <details class="card" style="padding:12px;margin-bottom:8px;">
+          <summary style="cursor:pointer;font-weight:700;">🧪 Pruebas</summary>
+          <div class="hw-muted" style="margin:8px 0;">Borra únicamente Halloween 2026 y los Jacks de prueba. No borra las ventas normales del ERP.</div>
+          <button class="btn-secondary btn-block" id="hwResetTests" style="border-color:var(--danger);color:var(--danger);">Borrar temporada de prueba</button>
+        </details>
+      </div>`;
+      document.getElementById('hwGenerateBatch').onclick=generateBatch;
+      document.getElementById('hwBackupBtn').onclick=downloadBackup;
+      document.getElementById('hwAuditBtn').onclick=copyAudit;
+      document.getElementById('hwInvDetails').addEventListener('toggle',e=>{ if(e.target.open)renderInventory(); });
+      document.getElementById('hwResetTests').onclick=resetTestsUI;
+    }
+  }
+
+  function isHalloweenChannel(){
+    const v=document.getElementById('canalSelect')?.value||'';
+    return String(v).trim().toLowerCase()==='halloween';
+  }
+
+  function updateHalloweenVisibility(){
+    const on=isHalloweenChannel();
+    const b=document.getElementById('btnHalloweenMode'); if(b){ b.style.display=on?'flex':'none'; if(!on)b.classList.remove('active'); }
+    const opt=document.getElementById('hwOptionsSection'); if(opt)opt.style.display=on?'block':'none';
+    if(!on){
+      const d=document.getElementById('hwDashboardOverlay'); if(d)d.style.display='none';
+      const s=document.getElementById('hwSaleOverlay'); if(s)s.style.display='none';
+      const dr=document.getElementById('hwDrawOverlay'); if(dr)dr.style.display='none';
+    }
   }
 
   async function initUI(){
@@ -457,8 +533,10 @@
       UI.initialized=true;
       const st=document.getElementById('hwSystemStatus');
       if(st) st.innerHTML=(lock.ok?'✅ Escritor principal':'⚠️ Solo consulta: otra pestaña escribe')+(rec.length?` · <span class="hw-danger">${rec.length} operación(es) a revisar</span>`:'');
-      document.getElementById('btnHalloweenMode')?.classList.toggle('active',true);
+      updateHalloweenVisibility();
       await syncTodaySales();
+      document.getElementById('canalSelect')?.addEventListener('change',updateHalloweenVisibility);
+      document.addEventListener('rv:session-changed',updateHalloweenVisibility);
       document.addEventListener('rv:sale-completed',async ev=>{
         const sessionCanal=String(ev.detail?.sessionCanal||ev.detail?.canal||'').trim().toLowerCase();
         if(sessionCanal!=='halloween') return;
@@ -485,6 +563,7 @@
 
   function escapeHtml(v){ const d=document.createElement('div');d.textContent=String(v??'');return d.innerHTML; }
   function showMsg(msg){ if(typeof showToast==='function')showToast(msg); else alert(msg); }
+  function emitHalloweenEvent(type,detail={}){ document.dispatchEvent(new CustomEvent('hw:event',{detail:{type,fecha:new Date().toISOString(),...detail}})); }
 
   async function openSale(sale){
     UI.currentSale=await Core.getSale(sale.ventaId);
@@ -493,40 +572,55 @@
 
   async function renderSaleBody(){
     const s=UI.currentSale=await Core.getSale(UI.currentSale.ventaId); const body=document.getElementById('hwSaleBody');
-    const rows=s.allocations.map(a=>`<div class="sale-row"><div><b>${escapeHtml(a.codigo)}</b><div class="sale-meta">${a.nuevo?'Jack activado':'Jack existente'}</div></div><div class="sale-amount">${money(a.monto)}</div></div>`).join('');
+    const rows=s.allocations.map(a=>`<div class="sale-row"><div><b>${escapeHtml(a.codigo)}</b><div class="sale-meta">${a.nuevo?'Jack activado':'Compra sumada'}</div></div><div class="sale-amount">${money(a.monto)}</div></div>`).join('');
+    const itemSummary=(s.items||[]).map(x=>`${escapeHtml(x.nombre)} ×${x.cantidad}`).join(' · ');
     body.innerHTML=`
       <div class="total-line"><span>Venta</span><strong>${money(s.total)}</strong></div>
+      ${itemSummary?`<div class="hw-muted">${itemSummary}</div>`:''}
       ${rows||''}
       <div class="total-line"><span>Queda por aplicar</span><strong>${money(s.unallocated)}</strong></div>
       ${s.unallocated>0?`<div class="hw-section">
-        <div class="field"><label>Código Jack</label><input id="hwSaleCode" type="text" placeholder="H26-XXXXXX" autocomplete="off"></div>
-        <div class="grid2" style="margin-top:8px;"><div class="field"><label>Monto para este Jack</label><input id="hwSaleAmount" type="number" min="0.01" step="0.01" value="${Number(s.unallocated).toFixed(2)}"></div>
-        <div class="field"><label>Tipo</label><select id="hwSaleType"><option value="existing">Ya tiene Jack</option><option value="new">Activar Jack nuevo</option></select></div></div>
+        <div class="field"><label>Código Jack</label><input id="hwSaleCode" type="text" placeholder="H26-XXXXXX" autocomplete="off"><div id="hwSaleCodeStatus" class="hw-muted" style="min-height:18px;margin-top:4px;">Escribe el código; el sistema detecta si es nuevo o activo.</div></div>
+        <div class="field" style="margin-top:8px;"><label>Monto para este Jack</label><input id="hwSaleAmount" type="number" min="0.01" step="0.01" value="${Number(s.unallocated).toFixed(2)}"></div>
         <button class="btn-primary" id="hwApplyJack">Aplicar a Jack</button>
-        <button class="btn-secondary btn-block" id="hwNoJack" style="margin-top:8px;">Seguir sin Jack</button>
-        <div class="hw-muted" style="margin-top:8px;">Puedes aplicar una parte y repetir para repartir una venta entre varios Jacks. Nunca podrá superar el total cobrado.</div>
+        <button class="btn-secondary btn-block" id="hwNoJack" style="margin-top:8px;">Terminar sin aplicar a Jack</button>
+        <div class="hw-muted" style="margin-top:8px;">Si una compra se reparte entre varios Jacks, aplica una parte y repite. Nunca podrá superar el total cobrado.</div>
       </div>`:`<div class="hw-ok" style="margin-top:10px;">✓ Venta completamente aplicada.</div>`}`;
     if(s.unallocated>0){
       document.getElementById('hwApplyJack').onclick=applySaleJack;
       document.getElementById('hwNoJack').onclick=noJackSale;
+      let t=null; document.getElementById('hwSaleCode').addEventListener('input',()=>{ clearTimeout(t); t=setTimeout(updateSaleCodeStatus,180); });
     }
+  }
+
+  async function updateSaleCodeStatus(){
+    const el=document.getElementById('hwSaleCode'); const st=document.getElementById('hwSaleCodeStatus'); if(!el||!st)return;
+    const code=normalizeCode(el.value); if(code.length<5){ st.textContent='Escribe el código; el sistema detecta si es nuevo o activo.'; st.className='hw-muted'; return; }
+    try{
+      const v=await Folios.validar(code);
+      if(!v.existe){ st.textContent='Código no encontrado en los Jacks impresos.'; st.className='hw-danger'; return; }
+      if(v.estado==='impresa'){ st.textContent=`Jack nuevo · requiere mínimo ${money(config.compraMinJack)} para activarse.`; st.className='hw-ok'; }
+      else if(v.estado==='entregada'){ st.textContent=`Jack activo · acumulado actual ${money(v.acumulado)}.`; st.className='hw-ok'; }
+      else { st.textContent=`Jack en estado: ${v.estado}.`; st.className='hw-danger'; }
+    }catch(e){ st.textContent=e.message; st.className='hw-danger'; }
   }
 
   async function applySaleJack(){
     try{
-      const code=document.getElementById('hwSaleCode').value; const amount=Number(document.getElementById('hwSaleAmount').value); const nuevo=document.getElementById('hwSaleType').value==='new';
-      const out=await Core.applyAllocation({ventaId:UI.currentSale.ventaId,codigo:code,monto:amount,nuevo}); UI.currentSale=out.sale;
+      const code=document.getElementById('hwSaleCode').value; const amount=Number(document.getElementById('hwSaleAmount').value);
+      const out=await Core.applyAllocation({ventaId:UI.currentSale.ventaId,codigo:code,monto:amount}); UI.currentSale=out.sale;
+      emitHalloweenEvent(out.nuevo?'jack_nuevo':'compra_jack',{codigo:normalizeCode(code),monto:amount,acumulado:out.result.acumulado,nivel:out.result.nivel,ventaId:UI.currentSale.ventaId});
+      if(out.nivelAntes!==out.nivelDespues && out.nivelDespues) emitHalloweenEvent('subio_nivel',{codigo:normalizeCode(code),antes:out.nivelAntes,despues:out.nivelDespues,acumulado:out.result.acumulado});
       if(out.cardsOwed>0) await openDraw({codigo:normalizeCode(code),ventaId:UI.currentSale.ventaId,count:out.cardsOwed,anonymous:false});
       await renderSaleBody();
-      showMsg(nuevo?'Jack activado':'Venta acumulada');
+      showMsg(out.nuevo?'Jack activado':'Compra sumada a Jack');
     }catch(e){ alert(e.message); }
   }
 
   async function noJackSale(){
     try{
       const out=await Core.closeSaleWithoutJack(UI.currentSale.ventaId); UI.currentSale=out.sale;
-      if(out.cardsOwed>0) await openDraw({codigo:null,ventaId:UI.currentSale.ventaId,count:out.cardsOwed,anonymous:true});
-      document.getElementById('hwSaleOverlay').style.display='none';
+      document.getElementById('hwSaleOverlay').style.display='none'; showMsg('Venta normal · sin Jack');
     }catch(e){alert(e.message);}
   }
 
@@ -551,19 +645,19 @@
 
   async function confirmDraw(){
     const ctx=UI.drawContext; if(!ctx)return; if(UI.selectedCards.length!==ctx.count){showMsg(`Faltan ${ctx.count-UI.selectedCards.length} por registrar`);return;}
-    try{ await Core.registerDraw({...ctx,cardIds:UI.selectedCards,source:'gratis'}); document.getElementById('hwDrawOverlay').style.display='none'; UI.drawContext=null; UI.selectedCards=[]; showMsg('Cartas registradas'); }
+    try{ await Core.registerDraw({...ctx,cardIds:UI.selectedCards,source:'gratis'}); emitHalloweenEvent('cartas_entregadas',{codigo:ctx.codigo||null,ventaId:ctx.ventaId||null,cantidad:UI.selectedCards.length,cardIds:[...UI.selectedCards]}); document.getElementById('hwDrawOverlay').style.display='none'; UI.drawContext=null; UI.selectedCards=[]; showMsg('Cartas registradas'); }
     catch(e){alert(e.message);}
   }
 
   async function confirmQuickDraw(){
     const ctx=UI.drawContext; if(!ctx)return;
     if(!confirm(`¿Confirmar que entregaste ${ctx.count} carta(s) sin registrar cuáles? Se contará la entrega, pero no actualizará inventario por diseño.`))return;
-    try{ await Core.registerQuickCards({...ctx,count:ctx.count,source:'gratis'}); document.getElementById('hwDrawOverlay').style.display='none'; UI.drawContext=null; UI.selectedCards=[]; showMsg('Entrega rápida registrada'); }
+    try{ await Core.registerQuickCards({...ctx,count:ctx.count,source:'gratis'}); emitHalloweenEvent('cartas_entregadas_rapido',{codigo:ctx.codigo||null,ventaId:ctx.ventaId||null,cantidad:ctx.count}); document.getElementById('hwDrawOverlay').style.display='none'; UI.drawContext=null; UI.selectedCards=[]; showMsg('Entrega rápida registrada'); }
     catch(e){alert(e.message);}
   }
 
   async function openDashboard(){
-    document.getElementById('hwDashboardOverlay').style.display='flex'; await refreshStats(); await renderInventory();
+    if(!isHalloweenChannel())return; document.getElementById('btnHalloweenMode')?.classList.add('active'); document.getElementById('hwDashboardOverlay').style.display='flex'; await refreshStats();
   }
 
   async function refreshStats(){
@@ -598,19 +692,26 @@
       if(!s.existe){p.innerHTML='<div class="hw-danger" style="margin-top:8px;">Jack no encontrado.</div>';return;}
       UI.currentJack=s.codigo;
       const unique=[...new Set((s.profile.cardHistory||[]).map(x=>x.id).filter(Boolean))];
+      const sales=await Core.getJackSales(s.codigo);
+      const salesHtml=sales.length?`<details style="margin-top:10px;"><summary style="cursor:pointer;font-weight:700;">Compras registradas (${sales.length})</summary>
+        <div style="margin-top:6px;">${sales.map(x=>{
+          const items=(x.items||[]).map(i=>`<div class="sale-meta">${escapeHtml(i.nombre)} · ${i.cantidad} × ${money(i.precio)} = ${money(i.total)}</div>`).join('')||'<div class="sale-meta">Detalle de productos no disponible en esta venta antigua.</div>';
+          return `<div style="padding:8px 0;border-bottom:1px solid var(--border);"><div style="display:flex;justify-content:space-between;gap:8px;"><b>${escapeHtml(x.fecha||x.createdAt||'')}</b><b>+${money(x.aplicado)}</b></div>${items}<div class="hw-muted">Cuenta completa: ${money(x.total)} · ${escapeHtml(x.ventaId)}</div></div>`;
+        }).join('')}</div></details>`:'';
       p.innerHTML=`<div class="card hw-card" style="margin-top:10px;"><b>${escapeHtml(s.codigo)}</b> <span class="hw-pill">${escapeHtml(s.estado)}</span>
         <div class="total-line"><span>Acumulado</span><strong>${money(s.acumulado)}</strong></div>
         <div class="total-line"><span>Nivel</span><strong>${escapeHtml(s.nivel||'sin nivel')}</strong></div>
         <div class="total-line"><span>Cartas gratis</span><strong>${s.profile.freeDelivered}/${s.freeEarned}${s.freePending?` · ${s.freePending} pendientes`:''}</strong></div>
-        <div class="hw-muted">Diseños registrados por el puesto: ${unique.length}/17. Esto no intenta adivinar intercambios.</div>
+        <div class="hw-muted">Diseños registrados por el puesto: ${unique.length}/17. El álbum físico manda después de intercambios.</div>
+        ${salesHtml}
         <div class="hw-line" style="margin-top:10px;"><button class="btn-secondary" id="hwDeliverPending">Entregar pendientes</button><button class="btn-secondary" id="hwToggleCatrina">${s.profile.catrina?'✓ Catrina':'Marcar Catrina'}</button></div>
         <div class="field-row"><input type="checkbox" id="hwPhysical"><label for="hwPhysical" style="font-size:13px;color:var(--text);">Jack físico presentado</label></div>
         <button class="btn-primary" id="hwRedeem">Canje final: bolo + Charro</button>
         <button class="btn-secondary btn-block" id="hwAlbumState" style="margin-top:8px;">Actualizar cartas que dice tener ahora</button>
       </div>`;
       document.getElementById('hwDeliverPending').onclick=()=>{ if(s.freePending>0)openDraw({codigo:s.codigo,ventaId:null,count:s.freePending,anonymous:false});else showMsg('No tiene cartas pendientes'); };
-      document.getElementById('hwToggleCatrina').onclick=async()=>{await Core.markCatrina(s.codigo,!s.profile.catrina);await lookupJack();};
-      document.getElementById('hwRedeem').onclick=async()=>{ try{const out=await Core.redeem(s.codigo,document.getElementById('hwPhysical').checked);if(out.yaCanjeada)alert('⚠️ Este Jack YA FUE CANJEADO.');else alert(`ENTREGAR: Bolo ${out.result.nivel||''} + Charro Negro\nAcumulado: ${money(out.result.acumulado)}`);await lookupJack();await refreshStats();}catch(e){alert(e.message);} };
+      document.getElementById('hwToggleCatrina').onclick=async()=>{await Core.markCatrina(s.codigo,!s.profile.catrina);emitHalloweenEvent('catrina_cambio',{codigo:s.codigo,entregada:!s.profile.catrina});await lookupJack();};
+      document.getElementById('hwRedeem').onclick=async()=>{ try{const out=await Core.redeem(s.codigo,document.getElementById('hwPhysical').checked);if(out.yaCanjeada)alert('⚠️ Este Jack YA FUE CANJEADO.');else {emitHalloweenEvent('canje_31',{codigo:s.codigo,acumulado:out.result.acumulado,nivel:out.result.nivel,charro:true});alert(`ENTREGAR: Bolo ${out.result.nivel||''} + Charro Negro\nAcumulado: ${money(out.result.acumulado)}`);}await lookupJack();await refreshStats();}catch(e){alert(e.message);} };
       document.getElementById('hwAlbumState').onclick=()=>openAlbumState(s);
     }catch(e){alert(e.message);}
   }
@@ -627,6 +728,15 @@
     if(!confirm(`Generar ${n} códigos Jack nuevos para impresión?`))return;
     try{ const out=await Folios.generarLote(n,config.prefijo); const text=['codigo\tlote',...out.codigos.map(c=>`${c}\t${out.lote}`)].join('\n'); await navigator.clipboard.writeText(text); alert(`${n} códigos generados y copiados al portapapeles.\nLote: ${out.lote}`);await refreshStats(); }
     catch(e){alert(e.message);}
+  }
+
+  async function resetTestsUI(){
+    const first=confirm('Esto borrará TODOS los Jacks, acumulados, cartas, inventario y eventos de Halloween 2026 en este dispositivo. No toca las ventas normales del ERP. ¿Continuar?');
+    if(!first)return;
+    const typed=prompt('Escribe BORRAR PRUEBAS para confirmar:','');
+    if(typed!=='BORRAR PRUEBAS'){ showMsg('Cancelado'); return; }
+    try{ await Core.resetSeasonForTests(); alert('Datos Halloween de prueba borrados. La página se recargará para iniciar limpia.'); location.reload(); }
+    catch(e){ alert('No se pudo borrar: '+e.message); }
   }
 
   async function downloadBackup(){
