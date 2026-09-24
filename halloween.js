@@ -8,7 +8,7 @@
 (function(root){
   'use strict';
 
-  const APP_VERSION = '0.2.0';
+  const APP_VERSION = '0.3.0';
   const DB_NAME = 'halloween_2026';
   const DB_VERSION = 1;
   const STORES = Object.freeze({
@@ -378,18 +378,132 @@
     return {type:'Halloween2026Backup',version:APP_VERSION,exportedAt:nowIso(),config:clone(config),folios,halloween:data};
   }
 
-  async function auditTSV(){
+  function parseFullBackup(input){
+    let data=input;
+    if(typeof input==='string'){
+      try{ data=JSON.parse(input); }catch(_){ throw new Error('El archivo no contiene JSON válido.'); }
+    }
+    if(!data||typeof data!=='object'||data.type!=='Halloween2026Backup'||!data.folios||!data.halloween) throw new Error('No parece un respaldo completo Halloween 2026.');
+    return data;
+  }
+
+  async function getStoreRows(name){
+    const tx=db.transaction([name],'readonly'); const rows=await reqPromise(tx.objectStore(name).getAll()); await txPromise(tx); return rows;
+  }
+  function isoMs(v){ const n=Date.parse(v||''); return Number.isFinite(n)?n:0; }
+  function unionByKey(a,b,keyFn){
+    const out=[], seen=new Set();
+    for(const x of [...(a||[]),...(b||[])]){ const k=keyFn(x); if(seen.has(k))continue; seen.add(k); out.push(clone(x)); }
+    return out;
+  }
+  function mergeProfile(local,incoming){
+    const useIncoming=isoMs(incoming.actualizadoEn)>isoMs(local.actualizadoEn);
+    const newer=useIncoming?incoming:local, older=useIncoming?local:incoming;
+    const out={...clone(older),...clone(newer)};
+    out.codigo=normalizeCode(local.codigo||incoming.codigo);
+    out.cardHistory=unionByKey(local.cardHistory,incoming.cardHistory,x=>JSON.stringify([x?.id??null,x?.fecha||'',x?.ventaId||'',x?.source||'']));
+    out.freeDelivered=Math.max(Number(local.freeDelivered||0),Number(incoming.freeDelivered||0));
+    out.rescates=Math.max(Number(local.rescates||0),Number(incoming.rescates||0));
+    const lr=isoMs(local.reportedAt), ir=isoMs(incoming.reportedAt);
+    out.reportedOwned=clone(ir>lr?(incoming.reportedOwned||[]):(local.reportedOwned||[]));
+    out.reportedAt=ir>lr?(incoming.reportedAt||null):(local.reportedAt||null);
+    return out;
+  }
+  function mergeSale(local,incoming){
+    const out=clone(local); let conflicts=0;
+    if((!out.items||!out.items.length) && incoming.items?.length){ out.items=clone(incoming.items); out.itemsCount=out.items.length; }
+    if(Number(out.total||0)!==Number(incoming.total||0) && Number(incoming.total||0)>0) conflicts++;
+    const map=new Map((out.allocations||[]).map(x=>[String(x.partId||JSON.stringify(x)),x]));
+    for(const x of incoming.allocations||[]){ const k=String(x.partId||JSON.stringify(x)); if(!map.has(k)){ (out.allocations||(out.allocations=[])).push(clone(x)); map.set(k,x); } else if(JSON.stringify(map.get(k))!==JSON.stringify(x)) conflicts++; }
+    out.closed=!!(local.closed||incoming.closed);
+    out.anonymousCardsDelivered=Math.max(Number(local.anonymousCardsDelivered||0),Number(incoming.anonymousCardsDelivered||0));
+    out.unallocated=Math.max(0,Number(out.total||0)-(out.allocations||[]).reduce((a,x)=>a+Number(x.monto||0),0));
+    return {record:out,conflicts};
+  }
+
+  async function analyzeImportAll(input){
+    const data=parseFullBackup(input);
+    const foliosAnalysis=await Folios.analizarImportacion(data.folios);
+    const incoming=data.halloween||{};
+    const counts={}; for(const k of ['profiles','sales','events','inventory','ops']) counts[k]=Array.isArray(incoming[k])?incoming[k].length:0;
+    return {folios:foliosAnalysis,counts,exportedAt:data.exportedAt||null,version:data.version||null};
+  }
+
+  async function importAllMerge(input){
+    if(!writerLock.owned) throw new Error('Esta pestaña no tiene permiso de escritura Halloween.');
+    const data=parseFullBackup(input);
+    const incoming=data.halloween||{};
+    const current={};
+    for(const [k,name] of Object.entries(STORES)) current[k.toLowerCase()]=await getStoreRows(name);
+    const foliosBefore=await Folios.exportar();
+    const substantiveLocal=((current.profiles?.length||0)+(current.sales?.length||0)+(current.events?.length||0)+(current.ops?.length||0)>0) || ((foliosBefore.folios||[]).length>0);
+    const folioAnalysis=await Folios.analizarImportacion(data.folios);
+    const folioResult=await Folios.aplicarImportacion(data.folios,{confirmado:true,resolverConflictos:'mantener_local'});
+    const stats={profilesAdded:0,profilesMerged:0,salesAdded:0,salesMerged:0,eventsAdded:0,opsAdded:0,inventoryRestored:0,conflicts:0};
+
+    const tx=db.transaction([STORES.PROFILES,STORES.SALES,STORES.EVENTS,STORES.INVENTORY,STORES.OPS],'readwrite');
+    const pSt=tx.objectStore(STORES.PROFILES), sSt=tx.objectStore(STORES.SALES), eSt=tx.objectStore(STORES.EVENTS), iSt=tx.objectStore(STORES.INVENTORY), oSt=tx.objectStore(STORES.OPS);
+    try{
+      const pMap=new Map((current.profiles||[]).map(x=>[normalizeCode(x.codigo),x]));
+      for(const raw of incoming.profiles||[]){ const inc=clone(raw); inc.codigo=normalizeCode(inc.codigo); const cur=pMap.get(inc.codigo); if(!cur){pSt.put(inc);stats.profilesAdded++;}else{pSt.put(mergeProfile(cur,inc));stats.profilesMerged++;} }
+
+      const sMap=new Map((current.sales||[]).map(x=>[String(x.ventaId),x]));
+      for(const raw of incoming.sales||[]){ const inc=clone(raw); const key=String(inc.ventaId); const cur=sMap.get(key); if(!cur){sSt.put(inc);stats.salesAdded++;}else{const m=mergeSale(cur,inc);sSt.put(m.record);stats.salesMerged++;stats.conflicts+=m.conflicts;} }
+
+      const eIds=new Set((current.events||[]).map(x=>String(x.id)));
+      for(const inc of incoming.events||[]){ if(!eIds.has(String(inc.id))){eSt.put(clone(inc));eIds.add(String(inc.id));stats.eventsAdded++;} }
+
+      const oMap=new Map((current.ops||[]).map(x=>[String(x.id),x]));
+      for(const inc0 of incoming.ops||[]){ const inc=clone(inc0), key=String(inc.id), cur=oMap.get(key); if(!cur){oSt.put(inc);stats.opsAdded++;}else if(cur.estado==='pendiente'&&inc.estado!=='pendiente'){oSt.put(inc);} }
+
+      const iMap=new Map((current.inventory||[]).map(x=>[String(x.id),x]));
+      for(const inc0 of incoming.inventory||[]){ const inc=clone(inc0), cur=iMap.get(String(inc.id));
+        if(!cur || !substantiveLocal){ iSt.put(inc); stats.inventoryRestored++; }
+        else { const merged=clone(cur); if(!merged.numero&&inc.numero)merged.numero=inc.numero; if((merged.stock===null||merged.stock===undefined)&&inc.stock!==null&&inc.stock!==undefined)merged.stock=inc.stock; if(!merged.nombre&&inc.nombre)merged.nombre=inc.nombre; iSt.put(merged); }
+      }
+      await txPromise(tx);
+    }catch(err){ try{tx.abort();}catch(_){} throw err; }
+
+    const incomingMeta=new Map((incoming.meta||[]).map(x=>[String(x.key),x.value]));
+    const localExported=new Set((await metaGet('auditExportedIds',[])).map(String));
+    for(const id of incomingMeta.get('auditExportedIds')||[]) localExported.add(String(id));
+    if(localExported.size) await metaSet('auditExportedIds',[...localExported]);
+    const localAudit=await metaGet('lastAuditAt',null), importedAudit=incomingMeta.get('lastAuditAt')||null;
+    if(isoMs(importedAudit)>isoMs(localAudit)) await metaSet('lastAuditAt',importedAudit);
+    const localBackup=await metaGet('lastBackupAt',null), importedBackup=incomingMeta.get('lastBackupAt')||null;
+    if(isoMs(importedBackup)>isoMs(localBackup)) await metaSet('lastBackupAt',importedBackup);
+    if(!substantiveLocal && data.config){ config={...DEFAULT_CONFIG,...clone(data.config)}; await metaSet('config',config); }
+    await metaSet('lastImportAt',nowIso());
+    return {ok:true,folios:folioResult,folioAnalysis,stats,keptLocalConflicts:folioAnalysis.conflictos||0};
+  }
+
+  async function auditRows(onlyPending=false){
     const tx=db.transaction([STORES.EVENTS,STORES.SALES],'readonly');
     const [ev,sales]=await Promise.all([reqPromise(tx.objectStore(STORES.EVENTS).getAll()),reqPromise(tx.objectStore(STORES.SALES).getAll())]); await txPromise(tx);
+    const exported=new Set(onlyPending?(await metaGet('auditExportedIds',[])).map(String):[]);
+    const events=ev.filter(e=>!onlyPending||!exported.has(String(e.id))).sort((a,b)=>String(a.fecha).localeCompare(String(b.fecha)));
     const saleMap=new Map(sales.map(x=>[String(x.ventaId),x]));
-    const head=['Fecha','Evento','VentaID','ParteID','Jack','Monto','Acumulado','Nivel','Cartas','Productos'];
-    const rows=ev.sort((a,b)=>String(a.fecha).localeCompare(String(b.fecha))).map(e=>{
+    const head=['MovimientoID','Fecha','Evento','VentaID','ParteID','Jack','Monto','Acumulado','Nivel','Cartas','Productos'];
+    const rows=events.map(e=>{
       const sale=saleMap.get(String(e.ventaId||''));
       const productos=(sale?.items||[]).map(i=>`${i.nombre} x${i.cantidad} @${Number(i.precio||0).toFixed(2)}`).join(' | ');
-      return [e.fecha||'',e.tipo||'',e.ventaId||'',e.partId||'',e.codigo||'',e.monto??'',e.acumulado??'',e.nivel||'',(e.cardIds||[]).join(','),productos];
+      return [e.id||'',e.fecha||'',e.tipo||'',e.ventaId||'',e.partId||'',e.codigo||'',e.monto??'',e.acumulado??'',e.nivel||'',(e.cardIds||[]).join(','),productos];
     });
-    return [head,...rows].map(r=>r.join('\t')).join('\n');
+    return {text:[head,...rows].map(r=>r.join('\t')).join('\n'),ids:events.map(e=>String(e.id)),count:events.length};
   }
+  async function auditTSV(){ return (await auditRows(false)).text; }
+  async function auditPendingTSV(){ return auditRows(true); }
+  async function setAuditPendingConfirm(ids){ await metaSet('auditPendingConfirmIds',[...new Set((ids||[]).map(String))]); }
+  async function markAuditExported(ids){
+    const cur=new Set((await metaGet('auditExportedIds',[])).map(String)); for(const id of ids||[])cur.add(String(id));
+    await metaSet('auditExportedIds',[...cur]); await metaSet('auditPendingConfirmIds',[]); await metaSet('lastAuditAt',nowIso()); return cur.size;
+  }
+  async function backupStatus(){
+    const ev=await getStoreRows(STORES.EVENTS), exported=new Set((await metaGet('auditExportedIds',[])).map(String));
+    const confirmIds=await metaGet('auditPendingConfirmIds',[]);
+    return {pending:ev.filter(e=>!exported.has(String(e.id))).length,total:ev.length,lastAuditAt:await metaGet('lastAuditAt',null),lastBackupAt:await metaGet('lastBackupAt',null),lastImportAt:await metaGet('lastImportAt',null),pendingConfirmIds:confirmIds||[]};
+  }
+  async function markBackupNow(){ const t=nowIso(); await metaSet('lastBackupAt',t); return t; }
 
   async function reconcileOps(){
     const tx=db.transaction([STORES.OPS],'readonly'); const ops=await reqPromise(tx.objectStore(STORES.OPS).getAll()); await txPromise(tx);
@@ -422,12 +536,13 @@
   const Core=Object.freeze({
     init:initCore,configure,get config(){return clone(config);},levels:LEVELS,cards:DEFAULT_CARDS,
     captureSale,getSale,getJackSales,applyAllocation,closeSaleWithoutJack,getProfile,jackSnapshot,listInventory,setInventory,registerDraw,registerQuickCards,
-    markCatrina,saveReportedOwned,redeem,summary,exportAll,auditTSV,reconcileOps,acquireWriterLock,folioHasSale,resetSeasonForTests
+    markCatrina,saveReportedOwned,redeem,summary,exportAll,auditTSV,auditPendingTSV,setAuditPendingConfirm,markAuditExported,backupStatus,markBackupNow,
+    analyzeImportAll,importAllMerge,reconcileOps,acquireWriterLock,folioHasSale,resetSeasonForTests
   });
   root.Halloween2026=Core;
 
   /* =========================== UI =========================== */
-  const UI={ currentSale:null, currentJack:null, selectedCards:[], drawContext:null, initialized:false };
+  const UI={ currentSale:null, currentJack:null, selectedCards:[], drawContext:null, initialized:false, noJackConfirmUntil:0, noJackTimer:null };
 
   function injectStyles(){
     const s=document.createElement('style'); s.textContent=`
@@ -490,8 +605,12 @@
         <details class="card" style="padding:12px;margin-bottom:8px;">
           <summary style="cursor:pointer;font-weight:700;">Jacks, respaldo y auditoría</summary>
           <div class="hw-line" style="margin-top:10px;"><input id="hwBatchCount" type="number" min="1" value="50"><button class="btn-secondary" id="hwGenerateBatch">Generar lote Jack</button></div>
-          <button class="btn-secondary btn-block" id="hwBackupBtn" style="margin-top:8px;">💾 Descargar respaldo completo</button>
-          <button class="btn-secondary btn-block" id="hwAuditBtn" style="margin-top:8px;">📋 Copiar auditoría para hoja</button>
+          <div id="hwBackupStatus" class="hw-muted" style="margin-top:8px;">Calculando respaldos…</div>
+          <button class="btn-secondary btn-block" id="hwBackupBtn" style="margin-top:8px;">💾 Descargar respaldo JSON completo</button>
+          <button class="btn-secondary btn-block" id="hwImportBtn" style="margin-top:8px;">↩️ Importar JSON · fusionar sin borrar</button>
+          <input id="hwImportFile" type="file" accept="application/json,.json" style="display:none;">
+          <button class="btn-secondary btn-block" id="hwAuditBtn" style="margin-top:8px;">📋 Copiar movimientos nuevos para hoja</button>
+          <button class="btn-secondary btn-block" id="hwAuditMarkBtn" style="margin-top:8px;display:none;">✓ Ya los pegué · marcar respaldados</button>
         </details>
         <details class="card" style="padding:12px;margin-bottom:8px;">
           <summary style="cursor:pointer;font-weight:700;">🧪 Pruebas</summary>
@@ -501,7 +620,10 @@
       </div>`;
       document.getElementById('hwGenerateBatch').onclick=generateBatch;
       document.getElementById('hwBackupBtn').onclick=downloadBackup;
+      document.getElementById('hwImportBtn').onclick=()=>document.getElementById('hwImportFile').click();
+      document.getElementById('hwImportFile').onchange=importBackupFile;
       document.getElementById('hwAuditBtn').onclick=copyAudit;
+      document.getElementById('hwAuditMarkBtn').onclick=markAuditCopied;
       document.getElementById('hwInvDetails').addEventListener('toggle',e=>{ if(e.target.open)renderInventory(); });
       document.getElementById('hwResetTests').onclick=resetTestsUI;
     }
@@ -516,6 +638,7 @@
     const on=isHalloweenChannel();
     const b=document.getElementById('btnHalloweenMode'); if(b){ b.style.display=on?'flex':'none'; if(!on)b.classList.remove('active'); }
     const opt=document.getElementById('hwOptionsSection'); if(opt)opt.style.display=on?'block':'none';
+    if(on) refreshBackupStatus();
     if(!on){
       const d=document.getElementById('hwDashboardOverlay'); if(d)d.style.display='none';
       const s=document.getElementById('hwSaleOverlay'); if(s)s.style.display='none';
@@ -618,6 +741,16 @@
   }
 
   async function noJackSale(){
+    const btn=document.getElementById('hwNoJack'); if(!btn)return;
+    const now=Date.now();
+    if(now>UI.noJackConfirmUntil){
+      UI.noJackConfirmUntil=now+4000;
+      btn.textContent='⚠ CONFIRMAR: VENTA SIN JACK';
+      btn.style.borderColor='var(--danger)'; btn.style.color='var(--danger)';
+      clearTimeout(UI.noJackTimer); UI.noJackTimer=setTimeout(()=>{ UI.noJackConfirmUntil=0; if(document.getElementById('hwNoJack')){document.getElementById('hwNoJack').textContent='Terminar sin aplicar a Jack';document.getElementById('hwNoJack').style.borderColor='';document.getElementById('hwNoJack').style.color='';}},4100);
+      return;
+    }
+    UI.noJackConfirmUntil=0; clearTimeout(UI.noJackTimer);
     try{
       const out=await Core.closeSaleWithoutJack(UI.currentSale.ventaId); UI.currentSale=out.sale;
       document.getElementById('hwSaleOverlay').style.display='none'; showMsg('Venta normal · sin Jack');
@@ -739,13 +872,42 @@
     catch(e){ alert('No se pudo borrar: '+e.message); }
   }
 
+  function niceDate(v){ if(!v)return 'nunca'; try{return new Date(v).toLocaleString();}catch(_){return String(v);} }
+  async function refreshBackupStatus(){
+    const el=document.getElementById('hwBackupStatus'); if(!el||!UI.initialized)return;
+    try{ const s=await Core.backupStatus(); el.innerHTML=`Pendientes para hoja: <b>${s.pending}</b> · último pase: ${escapeHtml(niceDate(s.lastAuditAt))}<br>Último JSON: ${escapeHtml(niceDate(s.lastBackupAt))}`;
+      const mark=document.getElementById('hwAuditMarkBtn'); if(mark){mark.style.display=s.pendingConfirmIds?.length?'block':'none';mark.textContent=s.pendingConfirmIds?.length?`✓ Ya pegué ${s.pendingConfirmIds.length} · marcar respaldados`:'✓ Ya los pegué · marcar respaldados';}
+    }catch(e){ el.textContent='No se pudo leer el estado de respaldo'; }
+  }
+
   async function downloadBackup(){
-    try{ const data=await Core.exportAll(); const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'}); const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`HW2026_${new Date().toISOString().slice(0,10)}_principal.json`;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),1000);showMsg('Respaldo descargado'); }
+    try{ const data=await Core.exportAll(); const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'}); const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`HW2026_${new Date().toISOString().slice(0,10)}_principal.json`;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),1000);await Core.markBackupNow();await refreshBackupStatus();showMsg('Respaldo JSON descargado'); }
     catch(e){alert(e.message);}
   }
 
+  async function importBackupFile(ev){
+    const input=ev.target, file=input.files?.[0]; if(!file)return;
+    try{
+      const text=await file.text(); const a=await Core.analyzeImportAll(text); const f=a.folios;
+      const msg=`Importación SEGURA por fusión. No borra datos locales.\n\nJacks nuevos: ${f.nuevos}\nRespaldo con más historia: ${f.cambios}\nLocal con más historia (se conserva): ${f.localMasNuevo}\nConflictos (se conserva local): ${f.conflictos}\nEventos contenidos en JSON: ${a.counts.events}\nVentas Halloween contenidas: ${a.counts.sales}\n\n¿Aplicar?`;
+      if(!confirm(msg)){input.value='';return;}
+      const out=await Core.importAllMerge(text);
+      alert(`Importación terminada sin borrar lo que ya tenías.\nJacks aplicados: ${out.folios.aplicados}\nEventos añadidos: ${out.stats.eventsAdded}\nVentas añadidas: ${out.stats.salesAdded}\nConflictos conservando local: ${out.keptLocalConflicts+out.stats.conflicts}`);
+      await refreshBackupStatus(); await refreshStats();
+    }catch(e){ alert('No se pudo importar: '+e.message); }
+    finally{ input.value=''; }
+  }
+
   async function copyAudit(){
-    try{ const t=await Core.auditTSV(); await navigator.clipboard.writeText(t); showMsg('Auditoría copiada — pega en tu hoja Halloween'); }
+    try{
+      const pack=await Core.auditPendingTSV(); if(!pack.count){showMsg('No hay movimientos nuevos para pasar a la hoja');return;}
+      const ok=typeof copyText==='function'?await copyText(pack.text):(await navigator.clipboard.writeText(pack.text),true);
+      if(!ok)throw new Error('No se pudo copiar al portapapeles');
+      await Core.setAuditPendingConfirm(pack.ids); await refreshBackupStatus(); showMsg(`${pack.count} movimientos copiados · pégalos en la hoja`);
+    }catch(e){alert(e.message);}
+  }
+  async function markAuditCopied(){
+    try{ const s=await Core.backupStatus(), ids=s.pendingConfirmIds||[]; if(!ids.length){showMsg('No hay un lote copiado pendiente de confirmar');return;} await Core.markAuditExported(ids); await refreshBackupStatus(); showMsg(`${ids.length} movimientos marcados como respaldados`); }
     catch(e){alert(e.message);}
   }
 

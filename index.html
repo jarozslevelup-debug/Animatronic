@@ -197,7 +197,7 @@
     </div>
 
     <div id="catalogSection" style="display:none;">
-      <p class="catalog-hint">Busca un producto y tócalo para fotografiarlo. La foto se descarga ya nombrada, lista para subir a <code>/images</code>.</p>
+      <p class="catalog-hint">Busca un producto y tócalo para fotografiarlo. La foto se optimiza a JPG, se descarga ya nombrada y se guarda temporalmente en la cola para exportarla después en ZIP.</p>
       <div class="card">
         <div class="search-box"><label for="searchInputCatalog">Buscar producto para fotografiar</label><input type="text" id="searchInputCatalog" placeholder="Ej. mascara halloween" autocomplete="off"></div>
         <div class="results" id="resultsListCatalog" style="display:none;"></div>
@@ -261,6 +261,13 @@
         <option value="150">Grande</option>
       </select>
     </div>
+    <details class="card" style="padding:12px;margin-top:14px;margin-bottom:8px;">
+      <summary style="cursor:pointer;font-weight:700;">📷 Fotos de catálogo</summary>
+      <div id="photoQueueStatus" class="catalog-hint" style="margin:8px 0 6px;">Cola de fotos: calculando…</div>
+      <button class="btn-secondary btn-block" id="btnExportPhotoZip" type="button">📦 Exportar ZIP de pendientes</button>
+      <button class="btn-secondary btn-block" id="btnClearPhotoQueue" type="button" style="margin-top:8px;">Vaciar cola de fotos</button>
+      <div class="catalog-hint" style="margin-top:8px;">Las fotos individuales se siguen descargando al celular. La cola sólo conserva una copia temporal para armar el ZIP.</div>
+    </details>
     <div class="section-title" style="margin-top:18px;">Administración</div>
     <button class="btn-secondary btn-block" id="btnClearDay" type="button">🗑 Vaciar ventas de hoy</button>
     <div id="hwOptionsMount"></div>
@@ -365,10 +372,48 @@ async function copyText(text){
   }
 }
 function handleImgError(img){
-  if(img.dataset.tried === "jpg"){ img.dataset.tried = "png"; img.src = CONFIG.imagesFolder + img.dataset.slug + ".png"; }
-  else { img.style.display = "none"; }
+  img.style.display = "none";
+  const tile = img.closest?.(".grid-tile");
+  if(tile) tile.classList.add("no-photo");
 }
 window.handleImgError = handleImgError;
+
+let catalogImageObserver = null;
+function getCatalogImageObserver(){
+  if(catalogImageObserver || !("IntersectionObserver" in window)) return catalogImageObserver;
+  catalogImageObserver = new IntersectionObserver((entries, obs)=>{
+    entries.forEach(entry=>{
+      if(!entry.isIntersecting) return;
+      const img = entry.target;
+      const src = img.dataset.src;
+      if(src && !img.getAttribute("src")){ img.src = src; }
+      obs.unobserve(img);
+    });
+  }, {root:null, rootMargin:"300px 0px", threshold:0.01});
+  return catalogImageObserver;
+}
+function lazyCatalogImage(img, slug){
+  img.loading = "lazy";
+  img.decoding = "async";
+  img.dataset.slug = slug;
+  img.dataset.src = CONFIG.imagesFolder + slug + ".jpg";
+  img.onerror = ()=>handleImgError(img);
+  const obs = getCatalogImageObserver();
+  if(obs) obs.observe(img); else img.src = img.dataset.src;
+}
+function downloadBlob(blob, filename){
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url), 1500);
+}
+function formatBytes(n){
+  const v=Number(n)||0;
+  if(v<1024) return v+" B";
+  if(v<1024*1024) return (v/1024).toFixed(v<100*1024?1:0)+" KB";
+  return (v/1024/1024).toFixed(1)+" MB";
+}
 
 /* ============================================================
    Estado
@@ -421,6 +466,7 @@ function startApp(){
   renderToday();
   renderFavoritosRow();
   renderCart();
+  updatePhotoQueueStatus();
 }
 
 /* ============================================================
@@ -441,7 +487,7 @@ function setupThemeSelect(currentTheme){
   sel.addEventListener("change", ()=> applyTheme(sel.value));
 }
 function setupOptionsPanel(){
-  document.getElementById("btnOptions").addEventListener("click", ()=>{ document.getElementById("optionsOverlay").style.display = "flex"; });
+  document.getElementById("btnOptions").addEventListener("click", ()=>{ document.getElementById("optionsOverlay").style.display = "flex"; updatePhotoQueueStatus(); });
   document.getElementById("closeOptions").addEventListener("click", ()=>{ document.getElementById("optionsOverlay").style.display = "none"; });
   const favToggle = document.getElementById("favToggle");
   favToggle.checked = storageGet("rv_show_favoritos", false);
@@ -467,6 +513,14 @@ function setupOptionsPanel(){
   const moreBtn = document.getElementById("btnFooterMore");
   const morePanel = document.getElementById("footerMorePanel");
   moreBtn.addEventListener("click", ()=>{ morePanel.classList.toggle("open"); });
+
+  document.getElementById("btnExportPhotoZip")?.addEventListener("click", exportPhotoQueueZip);
+  document.getElementById("btnClearPhotoQueue")?.addEventListener("click", async ()=>{
+    const photos = await listQueuedPhotos();
+    if(!photos.length){ showToast("La cola ya está vacía"); return; }
+    if(!confirm(`¿Vaciar ${photos.length} foto(s) de la cola temporal? Las JPG ya descargadas en tu celular no se borran.`)) return;
+    await clearPhotoQueue(); updatePhotoQueueStatus(); showToast("Cola de fotos vaciada");
+  });
 }
 function applySocioBtnVisibility(show){
   document.getElementById("btnCopySocio").style.display = show ? "block" : "none";
@@ -614,42 +668,154 @@ function setMode(mode){
 }
 
 /* ============================================================
+   Fotos de catálogo: optimización + cola temporal + ZIP
+   ============================================================ */
+const PHOTO_DB_NAME = "erp_catalog_photos_v1";
+const PHOTO_STORE = "pending";
+let photoDbPromise = null;
+function openPhotoDb(){
+  if(photoDbPromise) return photoDbPromise;
+  photoDbPromise = new Promise((resolve,reject)=>{
+    const r=indexedDB.open(PHOTO_DB_NAME,1);
+    r.onupgradeneeded=()=>{ if(!r.result.objectStoreNames.contains(PHOTO_STORE)) r.result.createObjectStore(PHOTO_STORE,{keyPath:"name"}); };
+    r.onsuccess=()=>resolve(r.result);
+    r.onerror=()=>reject(r.error||new Error("No se pudo abrir la cola de fotos"));
+  });
+  return photoDbPromise;
+}
+function photoReq(req){ return new Promise((resolve,reject)=>{ req.onsuccess=()=>resolve(req.result); req.onerror=()=>reject(req.error||new Error("IndexedDB fotos")); }); }
+function photoTx(tx){ return new Promise((resolve,reject)=>{ tx.oncomplete=()=>resolve(); tx.onerror=()=>reject(tx.error||new Error("IndexedDB fotos")); tx.onabort=()=>reject(tx.error||new Error("IndexedDB fotos abortada")); }); }
+async function queuePhoto(name, blob, meta={}){
+  const d=await openPhotoDb(); const tx=d.transaction([PHOTO_STORE],"readwrite");
+  tx.objectStore(PHOTO_STORE).put({name,blob,size:blob.size,createdAt:new Date().toISOString(),...meta});
+  await photoTx(tx); return true;
+}
+async function listQueuedPhotos(){
+  try{ const d=await openPhotoDb(); const tx=d.transaction([PHOTO_STORE],"readonly"); const rows=await photoReq(tx.objectStore(PHOTO_STORE).getAll()); await photoTx(tx); return rows.sort((a,b)=>String(a.name).localeCompare(String(b.name))); }
+  catch(e){ console.warn(e); return []; }
+}
+async function clearPhotoQueue(){
+  const d=await openPhotoDb(); const tx=d.transaction([PHOTO_STORE],"readwrite"); tx.objectStore(PHOTO_STORE).clear(); await photoTx(tx);
+}
+async function updatePhotoQueueStatus(){
+  const el=document.getElementById("photoQueueStatus"); if(!el) return;
+  const rows=await listQueuedPhotos(); const total=rows.reduce((a,x)=>a+Number(x.size||x.blob?.size||0),0);
+  el.textContent=`Cola de fotos: ${rows.length} · ${formatBytes(total)}`;
+}
+function canvasToJpegBlob(canvas, quality){
+  return new Promise((resolve,reject)=>canvas.toBlob(b=>b?resolve(b):reject(new Error("No se pudo crear JPG")),"image/jpeg",quality));
+}
+async function decodeCatalogPhoto(file){
+  if(window.createImageBitmap){
+    try{ const bmp=await createImageBitmap(file,{imageOrientation:"from-image"}); return {source:bmp,width:bmp.width,height:bmp.height,close:()=>bmp.close?.()}; }catch(_){ }
+  }
+  const url=URL.createObjectURL(file);
+  const img=new Image();
+  await new Promise((resolve,reject)=>{ img.onload=resolve; img.onerror=()=>reject(new Error("No se pudo leer la foto")); img.src=url; });
+  return {source:img,width:img.naturalWidth,height:img.naturalHeight,close:()=>URL.revokeObjectURL(url)};
+}
+async function optimizeCatalogPhoto(file){
+  const decoded=await decodeCatalogPhoto(file);
+  const targetMax=150*1024;
+  const minLongSide=700;
+  let longSide=Math.min(1200,Math.max(decoded.width,decoded.height));
+  let best=null, bestW=0, bestH=0;
+  try{
+    for(let dim=longSide; dim>=minLongSide; dim=Math.floor(dim*0.86)){
+      const scale=Math.min(1,dim/Math.max(decoded.width,decoded.height));
+      const w=Math.max(1,Math.round(decoded.width*scale)); const h=Math.max(1,Math.round(decoded.height*scale));
+      const canvas=document.createElement("canvas"); canvas.width=w; canvas.height=h;
+      const ctx=canvas.getContext("2d",{alpha:false}); ctx.drawImage(decoded.source,0,0,w,h);
+      for(const q of [0.82,0.76,0.70,0.64,0.58,0.52]){
+        const blob=await canvasToJpegBlob(canvas,q); best=blob; bestW=w; bestH=h;
+        if(blob.size<=targetMax) return {blob,width:w,height:h,quality:q};
+      }
+      if(scale>=0.999 && Math.max(decoded.width,decoded.height)<=minLongSide) break;
+    }
+    return {blob:best,width:bestW,height:bestH,quality:0.52};
+  } finally { decoded.close?.(); }
+}
+function u16(v){ const a=new Uint8Array(2); new DataView(a.buffer).setUint16(0,v,true); return a; }
+function u32(v){ const a=new Uint8Array(4); new DataView(a.buffer).setUint32(0,v>>>0,true); return a; }
+let crcTable=null;
+function crc32(bytes){
+  if(!crcTable){ crcTable=new Uint32Array(256); for(let n=0;n<256;n++){ let c=n; for(let k=0;k<8;k++) c=(c&1)?(0xEDB88320^(c>>>1)):(c>>>1); crcTable[n]=c>>>0; } }
+  let c=0xFFFFFFFF; for(const b of bytes)c=crcTable[(c^b)&0xFF]^(c>>>8); return (c^0xFFFFFFFF)>>>0;
+}
+function zipDosDateTime(date){
+  const d=date||new Date(); const year=Math.max(1980,d.getFullYear());
+  const time=(d.getHours()<<11)|(d.getMinutes()<<5)|(d.getSeconds()>>1);
+  const day=((year-1980)<<9)|((d.getMonth()+1)<<5)|d.getDate(); return {time,day};
+}
+async function buildStoreZip(files){
+  const enc=new TextEncoder(), locals=[], centrals=[]; let offset=0;
+  for(const f of files){
+    const name=enc.encode(f.name); const data=new Uint8Array(await f.blob.arrayBuffer()); const crc=crc32(data); const dt=zipDosDateTime(new Date(f.date||Date.now()));
+    const local=new Blob([u32(0x04034b50),u16(20),u16(0x0800),u16(0),u16(dt.time),u16(dt.day),u32(crc),u32(data.length),u32(data.length),u16(name.length),u16(0),name,data]);
+    locals.push(local);
+    const central=new Blob([u32(0x02014b50),u16(20),u16(20),u16(0x0800),u16(0),u16(dt.time),u16(dt.day),u32(crc),u32(data.length),u32(data.length),u16(name.length),u16(0),u16(0),u16(0),u16(0),u32(0),u32(offset),name]);
+    centrals.push(central); offset+=local.size;
+  }
+  const centralSize=centrals.reduce((a,b)=>a+b.size,0);
+  const end=new Blob([u32(0x06054b50),u16(0),u16(0),u16(files.length),u16(files.length),u32(centralSize),u32(offset),u16(0)]);
+  return new Blob([...locals,...centrals,end],{type:"application/zip"});
+}
+async function exportPhotoQueueZip(){
+  const rows=await listQueuedPhotos();
+  if(!rows.length){ showToast("No hay fotos pendientes"); return; }
+  showToast("Preparando ZIP…");
+  try{
+    const files=rows.map(r=>({name:"images/"+r.name,blob:r.blob,date:r.createdAt}));
+    const zip=await buildStoreZip(files); const name=`ERP_fotos_${todayISO()}.zip`;
+    downloadBlob(zip,name); showToast(`${rows.length} fotos · ${formatBytes(zip.size)} · ZIP descargado`);
+  }catch(e){ alert("No se pudo crear el ZIP: "+e.message); }
+}
+
+/* ============================================================
    Modo catálogo: tomar y descargar fotos
    ============================================================ */
 function openPhotoCapture(p){
   currentSelection = p;
   const slug = slugify(p.nombre);
+  const filename = slug + ".jpg";
   const card = document.getElementById("catalogCard");
   card.style.display = "block";
   card.innerHTML =
     '<div class="selected-title"></div>' +
-    '<div class="sale-meta" style="margin-top:2px;">archivo: ' + slug + '.jpg</div>' +
+    '<div class="sale-meta" style="margin-top:2px;">archivo: ' + filename + '</div>' +
     '<label class="btn-primary photo-btn">📷 Tomar foto<input type="file" accept="image/*" capture="environment" id="catalogPhotoInput" style="display:none;"></label>' +
+    '<div class="sale-meta" id="catalogOptimizeStatus" style="margin-top:8px;"></div>' +
     '<img id="catalogPreview" class="photo-preview">' +
-    '<button class="btn-secondary btn-block" id="downloadPhotoBtn" style="margin-top:10px;display:none;">Descargar ' + slug + '.jpg</button>';
+    '<button class="btn-secondary btn-block" id="downloadPhotoBtn" style="margin-top:10px;display:none;">Descargar JPG optimizado</button>';
   card.querySelector(".selected-title").textContent = p.nombre;
 
-  let capturedFile = null;
-  document.getElementById("catalogPhotoInput").addEventListener("change", (e)=>{
-    const file = e.target.files[0];
-    if(!file) return;
-    capturedFile = file;
-    const url = URL.createObjectURL(file);
-    const img = document.getElementById("catalogPreview");
-    img.src = url; img.style.display = "block";
-    document.getElementById("downloadPhotoBtn").style.display = "block";
+  let optimized = null;
+  let previewUrl = null;
+  document.getElementById("catalogPhotoInput").addEventListener("change", async (e)=>{
+    const file = e.target.files[0]; if(!file) return;
+    const status=document.getElementById("catalogOptimizeStatus"); const btn=document.getElementById("downloadPhotoBtn");
+    status.textContent=`Optimizando ${formatBytes(file.size)}…`; btn.style.display="none";
+    try{
+      optimized=await optimizeCatalogPhoto(file);
+      if(previewUrl) URL.revokeObjectURL(previewUrl); previewUrl=URL.createObjectURL(optimized.blob);
+      const img=document.getElementById("catalogPreview"); img.src=previewUrl; img.style.display="block";
+      status.textContent=`Listo: ${optimized.width}×${optimized.height} · ${formatBytes(optimized.blob.size)} JPG`;
+      btn.style.display="block";
+    }catch(err){ optimized=null; status.textContent="No se pudo optimizar: "+err.message; }
   });
-  document.getElementById("downloadPhotoBtn").addEventListener("click", ()=>{
-    if(!capturedFile) return;
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(capturedFile);
-    a.download = slug + ".jpg";
-    document.body.appendChild(a); a.click(); document.body.removeChild(a);
-    showToast("Descargada: " + slug + ".jpg — súbela a /images cuando puedas");
-    card.style.display = "none";
-    document.getElementById("searchInputCatalog").value = "";
-    document.getElementById("resultsListCatalog").innerHTML = "";
-    document.getElementById("searchInputCatalog").focus();
+  document.getElementById("downloadPhotoBtn").addEventListener("click", async ()=>{
+    if(!optimized) return;
+    try{
+      await queuePhoto(filename, optimized.blob, {producto:p.nombre,width:optimized.width,height:optimized.height});
+      downloadBlob(optimized.blob, filename);
+      await updatePhotoQueueStatus();
+      showToast(`Descargada y agregada a cola: ${filename} · ${formatBytes(optimized.blob.size)}`);
+      if(previewUrl) setTimeout(()=>URL.revokeObjectURL(previewUrl),1000);
+      card.style.display = "none";
+      document.getElementById("searchInputCatalog").value = "";
+      document.getElementById("resultsListCatalog").innerHTML = "";
+      document.getElementById("searchInputCatalog").focus();
+    }catch(err){ alert("No se pudo guardar la foto: "+err.message); }
   });
 }
 
@@ -740,12 +906,7 @@ function renderGrid(query){
       '<div class="grid-name"></div>' +
       '<button class="grid-star" type="button"></button>';
     const img = tile.querySelector(".grid-thumb");
-    img.dataset.slug = slug; img.dataset.tried = "jpg";
-    img.src = CONFIG.imagesFolder + slug + ".jpg";
-    img.onerror = ()=>{
-      if(img.dataset.tried === "jpg"){ img.dataset.tried = "png"; img.src = CONFIG.imagesFolder + slug + ".png"; }
-      else { img.remove(); tile.classList.add("no-photo"); }
-    };
+    lazyCatalogImage(img, slug);
     tile.querySelector(".grid-name").textContent = p.nombre;
     const starBtn = tile.querySelector(".grid-star");
     starBtn.textContent = favoritos.includes(p.nombre) ? "★" : "☆";
@@ -788,9 +949,7 @@ function renderResultsGeneric(query, listId, manualLinkId, mode){
       (mode==="venta" ? '<button class="star-btn" type="button"></button>' : "");
     const img = div.querySelector(".thumb");
     const slug = slugify(p.nombre);
-    img.dataset.slug = slug; img.dataset.tried = "jpg";
-    img.src = CONFIG.imagesFolder + slug + ".jpg";
-    img.onerror = ()=> handleImgError(img);
+    lazyCatalogImage(img, slug);
     div.querySelector(".result-name").textContent = p.nombre;
     div.querySelector(".result-qty").textContent = (p.cantidad !== "" ? "exist. " + p.cantidad : "");
 
@@ -857,7 +1016,8 @@ function openForm(product, prefillName){
   if(!isManual){
     card.querySelector(".selected-title").textContent = product.nombre;
     const img = document.getElementById("formThumb");
-    img.dataset.slug = slug; img.dataset.tried = "jpg";
+    img.dataset.slug = slug;
+    img.loading = "lazy"; img.decoding = "async";
     img.src = CONFIG.imagesFolder + slug + ".jpg";
     img.onerror = ()=> handleImgError(img);
   } else {
