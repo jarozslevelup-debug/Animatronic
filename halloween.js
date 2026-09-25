@@ -8,7 +8,7 @@
 (function(root){
   'use strict';
 
-  const APP_VERSION = '0.3.0';
+  const APP_VERSION = '0.3.1';
   const DB_NAME = 'halloween_2026';
   const DB_VERSION = 1;
   const STORES = Object.freeze({
@@ -605,6 +605,7 @@
         <details class="card" style="padding:12px;margin-bottom:8px;">
           <summary style="cursor:pointer;font-weight:700;">Jacks, respaldo y auditoría</summary>
           <div class="hw-line" style="margin-top:10px;"><input id="hwBatchCount" type="number" min="1" value="50"><button class="btn-secondary" id="hwGenerateBatch">Generar lote Jack</button></div>
+          <button class="btn-secondary btn-block" id="hwRecoverJacks" style="margin-top:8px;">📋 Recuperar / copiar Jacks existentes</button>
           <div id="hwBackupStatus" class="hw-muted" style="margin-top:8px;">Calculando respaldos…</div>
           <button class="btn-secondary btn-block" id="hwBackupBtn" style="margin-top:8px;">💾 Descargar respaldo JSON completo</button>
           <button class="btn-secondary btn-block" id="hwImportBtn" style="margin-top:8px;">↩️ Importar JSON · fusionar sin borrar</button>
@@ -619,6 +620,7 @@
         </details>
       </div>`;
       document.getElementById('hwGenerateBatch').onclick=generateBatch;
+      document.getElementById('hwRecoverJacks').onclick=recoverExistingJacks;
       document.getElementById('hwBackupBtn').onclick=downloadBackup;
       document.getElementById('hwImportBtn').onclick=()=>document.getElementById('hwImportFile').click();
       document.getElementById('hwImportFile').onchange=importBackupFile;
@@ -856,11 +858,55 @@
     await Core.saveReportedOwned(snapshot.codigo,ids); showMsg(`Estado declarado: ${ids.length}/17`); await lookupJack();
   }
 
+  function downloadPlainText(filename,text){
+    const blob=new Blob([text],{type:'text/plain;charset=utf-8'});
+    const a=document.createElement('a');
+    a.href=URL.createObjectURL(blob); a.download=filename; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(a.href),1500);
+  }
+
+  async function safeCopy(text){
+    if(typeof copyText==='function') return await copyText(text);
+    try{ await navigator.clipboard.writeText(text); return true; }
+    catch(_){ return false; }
+  }
+
   async function generateBatch(){
     const n=Math.floor(Number(document.getElementById('hwBatchCount').value)||0); if(n<1)return;
     if(!confirm(`Generar ${n} códigos Jack nuevos para impresión?`))return;
-    try{ const out=await Folios.generarLote(n,config.prefijo); const text=['codigo\tlote',...out.codigos.map(c=>`${c}\t${out.lote}`)].join('\n'); await navigator.clipboard.writeText(text); alert(`${n} códigos generados y copiados al portapapeles.\nLote: ${out.lote}`);await refreshStats(); }
-    catch(e){alert(e.message);}
+    let out;
+    try{
+      out=await Folios.generarLote(n,config.prefijo);
+    }catch(e){
+      alert('No se pudieron crear los Jacks: '+e.message);
+      return;
+    }
+
+    const text=['codigo\tlote',...out.codigos.map(c=>`${c}\t${out.lote}`)].join('\n');
+    const copied=await safeCopy(text);
+    if(copied){
+      alert(`${out.codigos.length} códigos Jack CREADOS correctamente y copiados al portapapeles.\nLote: ${out.lote}`);
+    }else{
+      downloadPlainText(`Jacks_${out.lote}.txt`,text);
+      alert(`${out.codigos.length} códigos Jack CREADOS correctamente.\n\nEl navegador no permitió copiar al portapapeles, así que descargué Jacks_${out.lote}.txt.\nLote: ${out.lote}`);
+    }
+    await refreshStats();
+  }
+
+  async function recoverExistingJacks(){
+    try{
+      const data=await Folios.exportar();
+      const rows=(data.folios||[]).slice().sort((a,b)=>String(a.creadoEn||'').localeCompare(String(b.creadoEn||'')));
+      if(!rows.length){ showMsg('Todavía no hay Jacks creados en este dispositivo'); return; }
+      const text=['codigo\tlote\testado\tcreado',...rows.map(f=>`${f.codigo||''}\t${f.lote||''}\t${f.estado||''}\t${f.creadoEn||''}`)].join('\n');
+      const copied=await safeCopy(text);
+      if(copied){
+        alert(`${rows.length} Jacks existentes copiados al portapapeles.\n\nEsto también recupera lotes que pudieron haberse creado aunque hubiera fallado la copia.`);
+      }else{
+        downloadPlainText(`Jacks_existentes_${new Date().toISOString().slice(0,10)}.txt`,text);
+        alert(`${rows.length} Jacks encontrados. El navegador no permitió copiar, así que descargué un TXT con todos.`);
+      }
+    }catch(e){ alert('No se pudieron recuperar los Jacks: '+e.message); }
   }
 
   async function resetTestsUI(){
