@@ -81,6 +81,14 @@
   .sale-name{font-size:14px;}
   .sale-meta{font-size:12px;color:var(--text-muted);margin-top:2px;}
   .sale-amount{font-size:14px;font-weight:700;white-space:nowrap;}
+  .today-sale-row{position:relative;user-select:none;-webkit-user-select:none;}
+  .today-sale-row.delete-armed{background:color-mix(in srgb, var(--danger) 10%, transparent);border-radius:10px;padding-left:8px;padding-right:8px;}
+  .sale-delete-unlocked{display:none;background:transparent;color:var(--danger);border:1px solid var(--danger);padding:6px 9px;font-size:12px;margin-top:5px;}
+  .today-sale-row.delete-armed .sale-delete-unlocked{display:inline-block;}
+  .hold-delete-hint{font-size:11px;color:var(--text-muted);margin-top:2px;}
+  .season-row{display:grid;grid-template-columns:1fr 1fr 76px 36px;gap:6px;align-items:end;margin-top:7px;}
+  .season-row input{padding:8px 7px;font-size:12px;}
+  .season-remove{padding:8px 0;background:transparent;border:1px solid var(--border);color:var(--danger);}
   .empty-note{font-size:13px;color:var(--text-muted);text-align:center;padding:18px 8px;}
   .footer-bar{position:fixed;bottom:0;left:0;right:0;background:var(--bg-elev);border-top:1px solid var(--border);padding:10px 16px calc(10px + env(safe-area-inset-bottom));}
   .footer-inner{max-width:480px;margin:0 auto;}
@@ -211,7 +219,7 @@
         <div class="search-box"><label for="searchInputPrecios">Filtrar</label><input type="text" id="searchInputPrecios" placeholder="Escribe para filtrar…" autocomplete="off"></div>
       </div>
       <div class="card">
-        <div class="price-header"><span class="pname">Producto</span><span class="pval">Amigo</span><span class="pval">Oferta</span><span class="pval">Normal</span></div>
+        <div class="price-header"><span class="pname">Producto</span><span class="pval">Amigo</span><span class="pval">Oferta</span><span class="pval">Normal</span><span class="pval" id="priceHalloweenHeader" style="display:none;">🎃</span></div>
         <div id="priceGrid"></div>
       </div>
     </div>
@@ -261,6 +269,32 @@
         <option value="150">Grande</option>
       </select>
     </div>
+    <details class="card" id="priceOptionsDetails" style="padding:12px;margin-top:14px;margin-bottom:8px;">
+      <summary style="cursor:pointer;font-weight:700;">💲 Precios sugeridos</summary>
+      <div class="catalog-hint" style="text-align:left;padding:8px 0;">Estos multiplicadores sólo sugieren precios. Siempre puedes escribir un precio manual.</div>
+      <div class="grid2" style="margin-top:8px;">
+        <div class="field"><label>Amigo ×</label><input id="priceMultAmigo" type="number" min="0.1" step="0.05"></div>
+        <div class="field"><label>Oferta ×</label><input id="priceMultOferta" type="number" min="0.1" step="0.05"></div>
+      </div>
+      <div class="grid2" style="margin-top:8px;">
+        <div class="field"><label>Normal ×</label><input id="priceMultNormal" type="number" min="0.1" step="0.05"></div>
+        <div class="field"><label>Redondeo</label>
+          <select id="priceRoundSelect">
+            <option value="0">Sin redondeo</option>
+            <option value="1">$1</option>
+            <option value="5">$5</option>
+            <option value="10">$10</option>
+          </select>
+        </div>
+      </div>
+      <div id="priceHalloweenSettings" style="display:none;margin-top:12px;padding-top:10px;border-top:1px solid var(--border);">
+        <div class="field-row"><input type="checkbox" id="priceHalloweenEnabled"><label for="priceHalloweenEnabled" style="font-size:14px;color:var(--text);">Activar precio estacional Halloween</label></div>
+        <div class="catalog-hint" style="text-align:left;padding:6px 0;">En cada fecha se usa el mayor entre tu precio Normal y el multiplicador estacional activo.</div>
+        <div id="priceSeasonRows"></div>
+        <button class="btn-secondary btn-block" id="priceAddSeasonRow" type="button" style="margin-top:8px;">+ Agregar tramo</button>
+      </div>
+      <button class="btn-secondary btn-block" id="priceSaveSettings" type="button" style="margin-top:10px;">Guardar precios</button>
+    </details>
     <details class="card" style="padding:12px;margin-top:14px;margin-bottom:8px;">
       <summary style="cursor:pointer;font-weight:700;">📷 Fotos de catálogo</summary>
       <div id="photoQueueStatus" class="catalog-hint" style="margin:8px 0 6px;">Cola de fotos: calculando…</div>
@@ -271,6 +305,19 @@
     <div class="section-title" style="margin-top:18px;">Administración</div>
     <button class="btn-secondary btn-block" id="btnClearDay" type="button">🗑 Vaciar ventas de hoy</button>
     <div id="hwOptionsMount"></div>
+  </div>
+</div>
+
+<div class="overlay" id="deleteSaleOverlay" style="display:none;">
+  <div class="overlay-card">
+    <div class="overlay-header"><strong>Eliminar venta</strong><button class="close-x" id="deleteSaleClose">✕</button></div>
+    <div id="deleteSaleSummary" class="catalog-hint" style="text-align:left;padding:0 0 12px;"></div>
+    <div class="field">
+      <label for="deleteSalePhrase">Escribe BORRAR</label>
+      <input id="deleteSalePhrase" type="text" autocomplete="off" placeholder="BORRAR">
+    </div>
+    <button class="btn-primary" id="deleteSaleConfirm" type="button" disabled style="background:var(--danger);color:#fff;">Eliminar definitivamente</button>
+    <button class="btn-secondary btn-block" id="deleteSaleCancel" type="button" style="margin-top:8px;">Cancelar</button>
   </div>
 </div>
 
@@ -287,7 +334,7 @@ const CONFIG = {
   whatsappNumber: "523317021170",
   canales: ["Halloween","Dia de muertos","Tianguis","TianguisNav","Navidad","Facebook","Calle","Propio","Regalo","Merma"],
   temaDefault: "oscuro",
-  multiplicadores: { amigo: 1.3, oferta: 1.5, normal: 2 },
+  multiplicadores: { amigo: 1.3, oferta: 1.5, normal: 2 }, // valores por defecto; Opciones puede sustituirlos
   puestosFiltrados: ["halloween", "dia de muertos"], // solo estos canales filtran el catálogo por Modelo
 };
 
@@ -337,7 +384,62 @@ function normalize(str){
 function slugify(str){ return normalize(str).replace(/[^a-z0-9]+/g,"-").replace(/^-+|-+$/g,""); }
 function money(n){ const v = Number(n) || 0; return "$" + v.toFixed(2); }
 function localNumber(n){ return (Number(n)||0).toFixed(2).replace(".", ","); }
-function todayISO(){ return new Date().toISOString().slice(0,10); }
+function todayISO(){
+  const d=new Date(), y=d.getFullYear(), m=String(d.getMonth()+1).padStart(2,"0"), day=String(d.getDate()).padStart(2,"0");
+  return `${y}-${m}-${day}`;
+}
+const DEFAULT_PRICE_SETTINGS = Object.freeze({
+  general:{amigo:1.3,oferta:1.5,normal:2},
+  roundTo:0,
+  halloween:{
+    enabled:true,
+    segments:[
+      {start:"2026-10-01",end:"2026-10-10",mult:2.0},
+      {start:"2026-10-11",end:"2026-10-20",mult:2.2},
+      {start:"2026-10-21",end:"2026-10-27",mult:2.4},
+      {start:"2026-10-28",end:"2026-10-30",mult:2.6},
+      {start:"2026-10-31",end:"2026-10-31",mult:3.0}
+    ]
+  }
+});
+function loadPriceSettings(){
+  const raw=storageGet("rv_price_settings",null)||{};
+  return {
+    general:{
+      amigo:Number(raw.general?.amigo)||DEFAULT_PRICE_SETTINGS.general.amigo,
+      oferta:Number(raw.general?.oferta)||DEFAULT_PRICE_SETTINGS.general.oferta,
+      normal:Number(raw.general?.normal)||DEFAULT_PRICE_SETTINGS.general.normal
+    },
+    roundTo:[0,1,5,10].includes(Number(raw.roundTo))?Number(raw.roundTo):DEFAULT_PRICE_SETTINGS.roundTo,
+    halloween:{
+      enabled:raw.halloween?.enabled!==undefined?!!raw.halloween.enabled:DEFAULT_PRICE_SETTINGS.halloween.enabled,
+      segments:Array.isArray(raw.halloween?.segments)&&raw.halloween.segments.length
+        ? raw.halloween.segments.map(x=>({start:String(x.start||""),end:String(x.end||""),mult:Number(x.mult)||0}))
+        : DEFAULT_PRICE_SETTINGS.halloween.segments.map(x=>({...x}))
+    }
+  };
+}
+let priceSettings = null;
+function ensurePriceSettings(){ if(!priceSettings) priceSettings=loadPriceSettings(); return priceSettings; }
+function roundSuggestedPrice(v){
+  const step=Number(ensurePriceSettings().roundTo)||0;
+  if(!step) return Number(v)||0;
+  return Math.round((Number(v)||0)/step)*step;
+}
+function roundUpSuggestedPrice(v){
+  const step=Number(ensurePriceSettings().roundTo)||0;
+  if(!step) return Number(v)||0;
+  return Math.ceil(((Number(v)||0)-1e-9)/step)*step;
+}
+function activeHalloweenMultiplier(date=todayISO()){
+  const ps=ensurePriceSettings();
+  if(!ps.halloween.enabled) return null;
+  const active=ps.halloween.segments.filter(x=>x.start&&x.end&&date>=x.start&&date<=x.end&&Number(x.mult)>0).map(x=>Number(x.mult));
+  return active.length?Math.max(...active):null;
+}
+function isHalloweenSaleChannel(){
+  return normalize(document.getElementById("canalSelect")?.value||"")==="halloween";
+}
 function uid(){ return Date.now().toString(36) + Math.random().toString(36).slice(2,6); }
 function escapeAttr(str){ return String(str).replace(/"/g,"&quot;"); }
 function parseNumberFlexible(raw){
@@ -462,6 +564,11 @@ function boot(){
 }
 function startApp(){
   initSessionDefaults();
+  updateSeasonPriceOptionsVisibility();
+  document.dispatchEvent(new CustomEvent("rv:session-changed",{detail:{
+    canal:document.getElementById("canalSelect").value,
+    vendedor:document.getElementById("vendedorInput").value
+  }}));
   loadInventory();
   renderToday();
   renderFavoritosRow();
@@ -521,9 +628,121 @@ function setupOptionsPanel(){
     if(!confirm(`¿Vaciar ${photos.length} foto(s) de la cola temporal? Las JPG ya descargadas en tu celular no se borran.`)) return;
     await clearPhotoQueue(); updatePhotoQueueStatus(); showToast("Cola de fotos vaciada");
   });
+
+  setupPriceOptions();
+  setupSaleDeleteOverlay();
 }
 function applySocioBtnVisibility(show){
   document.getElementById("btnCopySocio").style.display = show ? "block" : "none";
+}
+
+function renderSeasonRows(){
+  const box=document.getElementById("priceSeasonRows"); if(!box)return;
+  const ps=ensurePriceSettings();
+  box.innerHTML="";
+  ps.halloween.segments.forEach((seg,idx)=>{
+    const row=document.createElement("div"); row.className="season-row";
+    row.innerHTML=`<div class="field"><label>Desde</label><input type="date" class="season-start" value="${escapeAttr(seg.start)}"></div>
+      <div class="field"><label>Hasta</label><input type="date" class="season-end" value="${escapeAttr(seg.end)}"></div>
+      <div class="field"><label>×</label><input type="number" class="season-mult" min="0.1" step="0.05" value="${Number(seg.mult)||""}"></div>
+      <button class="season-remove" type="button" title="Quitar tramo">✕</button>`;
+    row.querySelector(".season-remove").addEventListener("click",()=>{
+      priceSettings.halloween.segments.splice(idx,1); renderSeasonRows();
+    });
+    box.appendChild(row);
+  });
+}
+function updateSeasonPriceOptionsVisibility(){
+  const el=document.getElementById("priceHalloweenSettings");
+  if(el) el.style.display=isHalloweenSaleChannel()?"block":"none";
+}
+function setupPriceOptions(){
+  priceSettings=loadPriceSettings();
+  const a=document.getElementById("priceMultAmigo"), o=document.getElementById("priceMultOferta"), n=document.getElementById("priceMultNormal");
+  if(!a||!o||!n)return;
+  a.value=priceSettings.general.amigo; o.value=priceSettings.general.oferta; n.value=priceSettings.general.normal;
+  document.getElementById("priceRoundSelect").value=String(priceSettings.roundTo);
+  document.getElementById("priceHalloweenEnabled").checked=priceSettings.halloween.enabled;
+  renderSeasonRows(); updateSeasonPriceOptionsVisibility();
+  document.getElementById("priceAddSeasonRow").addEventListener("click",()=>{
+    priceSettings.halloween.segments.push({start:"2026-10-01",end:"2026-10-31",mult:2});
+    renderSeasonRows();
+  });
+  document.getElementById("priceSaveSettings").addEventListener("click",()=>{
+    const general={amigo:Number(a.value),oferta:Number(o.value),normal:Number(n.value)};
+    if(!Object.values(general).every(v=>Number.isFinite(v)&&v>0)){ showToast("Revisa los multiplicadores"); return; }
+    const rows=[...document.querySelectorAll("#priceSeasonRows .season-row")];
+    const segments=rows.map(r=>({
+      start:r.querySelector(".season-start").value,
+      end:r.querySelector(".season-end").value,
+      mult:Number(r.querySelector(".season-mult").value)
+    })).filter(x=>x.start&&x.end&&Number.isFinite(x.mult)&&x.mult>0);
+    if(segments.some(x=>x.end<x.start)){ showToast("Hay un tramo con fechas invertidas"); return; }
+    priceSettings={
+      general,
+      roundTo:Number(document.getElementById("priceRoundSelect").value)||0,
+      halloween:{enabled:document.getElementById("priceHalloweenEnabled").checked,segments:segments.sort((x,y)=>x.start.localeCompare(y.start))}
+    };
+    storageSet("rv_price_settings",priceSettings);
+    renderSeasonRows();
+    if(appMode==="precios") renderPriceGrid(document.getElementById("searchInputPrecios").value);
+    showToast("Precios guardados");
+  });
+  document.addEventListener("rv:session-changed",()=>{
+    updateSeasonPriceOptionsVisibility();
+    if(appMode==="precios") renderPriceGrid(document.getElementById("searchInputPrecios").value);
+  });
+}
+
+let pendingDeleteSale=null;
+function setupSaleDeleteOverlay(){
+  const overlay=document.getElementById("deleteSaleOverlay");
+  const phrase=document.getElementById("deleteSalePhrase");
+  const confirmBtn=document.getElementById("deleteSaleConfirm");
+  const close=()=>{
+    overlay.style.display="none"; pendingDeleteSale=null; phrase.value=""; confirmBtn.disabled=true;
+  };
+  document.getElementById("deleteSaleClose").addEventListener("click",close);
+  document.getElementById("deleteSaleCancel").addEventListener("click",close);
+  phrase.addEventListener("input",()=>{ confirmBtn.disabled=normalize(phrase.value)!=="borrar"; });
+  confirmBtn.addEventListener("click",()=>{
+    if(!pendingDeleteSale||normalize(phrase.value)!=="borrar")return;
+    const id=pendingDeleteSale.id; close(); removeSale(id); showToast("Venta eliminada");
+  });
+}
+function openSaleDeleteConfirm(sale){
+  pendingDeleteSale=sale;
+  const summary=document.getElementById("deleteSaleSummary");
+  summary.innerHTML=`<b>${escapeHtmlText(sale.nombre)}</b><br>${Number(sale.cantidad)||0} × ${money(sale.precio)} · <b>${money(sale.total)}</b><br>${escapeHtmlText(sale.fecha||"")} · ${escapeHtmlText(sale.canal||"")}`;
+  document.getElementById("deleteSalePhrase").value="";
+  document.getElementById("deleteSaleConfirm").disabled=true;
+  document.getElementById("deleteSaleOverlay").style.display="flex";
+  setTimeout(()=>document.getElementById("deleteSalePhrase").focus(),80);
+}
+function escapeHtmlText(v){
+  const d=document.createElement("div"); d.textContent=String(v??""); return d.innerHTML;
+}
+function armSaleRowDelete(row,sale){
+  let timer=null,startX=0,startY=0,armedTimer=null,suppressClick=false;
+  const cancelHold=()=>{ if(timer){clearTimeout(timer);timer=null;} };
+  row.addEventListener("pointerdown",(e)=>{
+    if(e.target.closest("button"))return;
+    startX=e.clientX; startY=e.clientY; suppressClick=false; cancelHold();
+    timer=setTimeout(()=>{
+      timer=null; suppressClick=true;
+      document.querySelectorAll(".today-sale-row.delete-armed").forEach(x=>{if(x!==row)x.classList.remove("delete-armed");});
+      row.classList.add("delete-armed");
+      if(navigator.vibrate) navigator.vibrate(35);
+      clearTimeout(armedTimer); armedTimer=setTimeout(()=>row.classList.remove("delete-armed"),6000);
+    },900);
+  });
+  row.addEventListener("pointermove",(e)=>{ if(Math.abs(e.clientX-startX)>10||Math.abs(e.clientY-startY)>10)cancelHold(); });
+  ["pointerup","pointercancel","pointerleave"].forEach(ev=>row.addEventListener(ev,cancelHold));
+  row.addEventListener("contextmenu",e=>e.preventDefault());
+  row.addEventListener("click",e=>{ if(suppressClick&&!e.target.closest("button")){e.preventDefault();e.stopPropagation();suppressClick=false;} },true);
+  row.querySelector(".sale-delete-unlocked").addEventListener("click",(e)=>{
+    e.stopPropagation(); clearTimeout(armedTimer); row.classList.remove("delete-armed"); openSaleDeleteConfirm(sale);
+  });
 }
 
 /* ============================================================
@@ -824,6 +1043,8 @@ function openPhotoCapture(p){
    ============================================================ */
 function renderPriceGrid(query){
   const grid = document.getElementById("priceGrid");
+  const halloween=isHalloweenSaleChannel() && activeHalloweenMultiplier()!==null;
+  const hHead=document.getElementById("priceHalloweenHeader"); if(hHead)hHead.style.display=halloween?"inline":"none";
   const q = normalize(query);
   const words = q.split(/\s+/).filter(Boolean);
   const list = productosVisibles().filter(p=>{
@@ -840,17 +1061,28 @@ function renderPriceGrid(query){
       '<span class="pname"></span>' +
       '<span class="pval">' + (precios ? money(precios.amigo) : "—") + '</span>' +
       '<span class="pval">' + (precios ? money(precios.oferta) : "—") + '</span>' +
-      '<span class="pval">' + (precios ? money(precios.normal) : "—") + '</span>';
+      '<span class="pval">' + (precios ? money(precios.normal) : "—") + '</span>' +
+      (halloween?'<span class="pval">' + (precios ? money(precios.halloween.precio) : "—") + '</span>':'');
     row.querySelector(".pname").textContent = p.nombre;
     grid.appendChild(row);
   });
 }
 function calcularPrecios(costo){
   if(costo === null || costo === undefined || isNaN(costo) || costo <= 0) return null;
+  const ps=ensurePriceSettings();
+  const season=activeHalloweenMultiplier();
+  const effectiveHalloween=Math.max(ps.general.normal, season||0);
   return {
-    amigo: costo * CONFIG.multiplicadores.amigo,
-    oferta: costo * CONFIG.multiplicadores.oferta,
-    normal: costo * CONFIG.multiplicadores.normal
+    amigo:roundSuggestedPrice(costo*ps.general.amigo),
+    oferta:roundSuggestedPrice(costo*ps.general.oferta),
+    normal:roundSuggestedPrice(costo*ps.general.normal),
+    mults:{...ps.general},
+    halloween:{
+      active:season!==null,
+      seasonalMult:season,
+      effectiveMult:effectiveHalloween,
+      precio:roundUpSuggestedPrice(costo*effectiveHalloween)
+    }
   };
 }
 
@@ -1000,9 +1232,12 @@ function openForm(product, prefillName){
       : "") +
     (precios
       ? '<div class="chip-row" id="priceChips">' +
-          '<button type="button" class="price-chip" data-v="'+ precios.amigo.toFixed(2) +'">' + money(precios.amigo) + '<small>Amigo ×1.3</small></button>' +
-          '<button type="button" class="price-chip" data-v="'+ precios.oferta.toFixed(2) +'">' + money(precios.oferta) + '<small>Oferta ×1.5</small></button>' +
-          '<button type="button" class="price-chip" data-v="'+ precios.normal.toFixed(2) +'">' + money(precios.normal) + '<small>Normal ×2</small></button>' +
+          '<button type="button" class="price-chip" data-v="'+ precios.amigo.toFixed(2) +'">' + money(precios.amigo) + '<small>Amigo ×'+ precios.mults.amigo.toFixed(2).replace(/0+$/,"").replace(/\.$/,"") +'</small></button>' +
+          '<button type="button" class="price-chip" data-v="'+ precios.oferta.toFixed(2) +'">' + money(precios.oferta) + '<small>Oferta ×'+ precios.mults.oferta.toFixed(2).replace(/0+$/,"").replace(/\.$/,"") +'</small></button>' +
+          '<button type="button" class="price-chip" data-v="'+ precios.normal.toFixed(2) +'">' + money(precios.normal) + '<small>Normal ×'+ precios.mults.normal.toFixed(2).replace(/0+$/,"").replace(/\.$/,"") +'</small></button>' +
+          (isHalloweenSaleChannel() && precios.halloween.active
+            ? '<button type="button" class="price-chip" data-v="'+ precios.halloween.precio.toFixed(2) +'" style="border-color:#8f54c7;">' + money(precios.halloween.precio) + '<small>🎃 hoy ×'+ precios.halloween.effectiveMult.toFixed(2).replace(/0+$/,"").replace(/\.$/,"") +'</small></button>'
+            : '') +
         '</div>'
       : "") +
     '<div class="grid2" style="margin-top:12px;">' +
@@ -1179,13 +1414,13 @@ function renderToday(){
     emptyEl.style.display = "none"; listEl.innerHTML = "";
     todaySales.slice().reverse().forEach(s=>{
       const row = document.createElement("div");
-      row.className = "sale-row";
+      row.className = "sale-row today-sale-row";
       row.innerHTML =
         '<div class="sale-left">' +
           (s.foto ? '<img src="' + s.foto + '" style="width:38px;height:38px;border-radius:8px;object-fit:cover;">' : '') +
-          '<div><div class="sale-name"></div><div class="sale-meta"></div></div>' +
+          '<div><div class="sale-name"></div><div class="sale-meta"></div><div class="hold-delete-hint">Mantén presionado para opciones</div></div>' +
         '</div>' +
-        '<div style="text-align:right;"><div class="sale-amount"></div><button class="close-x" type="button">✕</button></div>';
+        '<div style="text-align:right;"><div class="sale-amount"></div><button class="sale-delete-unlocked" type="button">🗑 Eliminar</button></div>';
       row.querySelector(".sale-name").textContent = s.nombre;
       if(s.manual){
         const b = document.createElement("span");
@@ -1194,7 +1429,7 @@ function renderToday(){
       }
       row.querySelector(".sale-meta").textContent = s.cantidad + " × " + money(s.precio) + " · " + s.canal;
       row.querySelector(".sale-amount").textContent = money(s.total);
-      row.querySelector("button").addEventListener("click", ()=> removeSale(s.id));
+      armSaleRowDelete(row,s);
       listEl.appendChild(row);
     });
   }
@@ -1241,9 +1476,9 @@ document.getElementById("btnWhatsapp").addEventListener("click", ()=>{
 });
 document.getElementById("btnClearDay").addEventListener("click", ()=>{
   if(todaySales.length === 0) return;
-  if(confirm("¿Vaciar la lista de ventas de hoy? Asegúrate de haberlas pegado o enviado ya.")){
-    todaySales = []; persistToday(); renderToday();
-  }
+  const typed=prompt("Esta acción elimina TODA la lista de ventas de hoy.\n\nEscribe VACIAR VENTAS para confirmar:","");
+  if(normalize(typed||"")!=="vaciar ventas"){ showToast("Cancelado"); return; }
+  todaySales = []; persistToday(); renderToday(); showToast("Ventas de hoy vaciadas");
 });
 
 /* Catálogo embebido de prueba eliminado: el ERP usa exclusivamente el CSV configurado. */

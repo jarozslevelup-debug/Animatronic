@@ -8,7 +8,7 @@
 (function(root){
   'use strict';
 
-  const APP_VERSION = '0.3.1';
+  const APP_VERSION = '0.4.0';
   const DB_NAME = 'halloween_2026';
   const DB_VERSION = 1;
   const STORES = Object.freeze({
@@ -524,10 +524,20 @@
     d.close();
   }
 
+  async function getOperationalMode(){
+    const mode=await metaGet('operationalMode','pruebas');
+    return mode==='produccion'?'produccion':'pruebas';
+  }
+  async function setOperationalMode(mode){
+    const next=mode==='produccion'?'produccion':'pruebas';
+    await metaSet('operationalMode',next); return next;
+  }
+
   async function resetSeasonForTests(){
     if(!writerLock.owned) throw new Error('Esta pestaña no tiene permiso de escritura Halloween.');
+    if(await getOperationalMode()==='produccion') throw new Error('Modo PRODUCCIÓN activo. Vuelve deliberadamente a modo pruebas antes de borrar.');
     const names=Object.values(STORES); const tx=db.transaction(names,'readwrite'); for(const name of names)tx.objectStore(name).clear(); await txPromise(tx);
-    config={...DEFAULT_CONFIG}; await metaSet('config',config); await ensureInventory(); await clearFoliosForTests();
+    config={...DEFAULT_CONFIG}; await metaSet('config',config); await metaSet('operationalMode','pruebas'); await ensureInventory(); await clearFoliosForTests();
     return {ok:true};
   }
 
@@ -537,12 +547,12 @@
     init:initCore,configure,get config(){return clone(config);},levels:LEVELS,cards:DEFAULT_CARDS,
     captureSale,getSale,getJackSales,applyAllocation,closeSaleWithoutJack,getProfile,jackSnapshot,listInventory,setInventory,registerDraw,registerQuickCards,
     markCatrina,saveReportedOwned,redeem,summary,exportAll,auditTSV,auditPendingTSV,setAuditPendingConfirm,markAuditExported,backupStatus,markBackupNow,
-    analyzeImportAll,importAllMerge,reconcileOps,acquireWriterLock,folioHasSale,resetSeasonForTests
+    analyzeImportAll,importAllMerge,reconcileOps,acquireWriterLock,folioHasSale,resetSeasonForTests,getOperationalMode,setOperationalMode
   });
   root.Halloween2026=Core;
 
   /* =========================== UI =========================== */
-  const UI={ currentSale:null, currentJack:null, selectedCards:[], drawContext:null, initialized:false, noJackConfirmUntil:0, noJackTimer:null };
+  const UI={ currentSale:null, currentJack:null, selectedCards:[], drawContext:null, initialized:false, noJackConfirmUntil:0, noJackTimer:null, scanner:null };
 
   function injectStyles(){
     const s=document.createElement('style'); s.textContent=`
@@ -557,6 +567,9 @@
       .hw-overlay{z-index:220}.hw-wide{max-width:440px}.hw-line{display:flex;gap:8px;align-items:center}.hw-line>*{flex:1}
       .hw-danger{color:var(--danger)}.hw-ok{color:var(--ok)}.hw-section{margin-top:14px;padding-top:12px;border-top:1px solid var(--border)}
       .hw-pill{display:inline-block;padding:3px 8px;border-radius:20px;background:var(--surface-2);font-size:11px;margin:2px}
+      .hw-scan-video{width:100%;aspect-ratio:3/4;max-height:60vh;object-fit:cover;background:#000;border-radius:12px;border:1px solid var(--border)}
+      .hw-scan-frame{position:relative}.hw-scan-frame:after{content:"";position:absolute;inset:18% 12%;border:2px solid var(--accent);border-radius:14px;pointer-events:none}
+      .hw-scan-btn{flex:0 0 auto;min-width:48px;padding-left:11px;padding-right:11px}
     `; document.head.appendChild(s);
   }
 
@@ -570,11 +583,22 @@
     const saleOverlay=document.createElement('div'); saleOverlay.id='hwSaleOverlay'; saleOverlay.className='overlay hw-overlay'; saleOverlay.style.display='none'; saleOverlay.innerHTML=`
       <div class="overlay-card hw-wide"><div class="overlay-header"><strong>🎃 Halloween · Jack</strong><button class="close-x" id="hwSaleClose">✕</button></div>
       <div id="hwSaleBody"></div></div>`; document.body.appendChild(saleOverlay);
-    document.getElementById('hwSaleClose').onclick=()=>{ saleOverlay.style.display='none'; };
+    document.getElementById('hwSaleClose').onclick=()=>{ clearSaleTransient(); saleOverlay.style.display='none'; };
+
+    const scanner=document.createElement('div'); scanner.id='hwQrOverlay'; scanner.className='overlay hw-overlay'; scanner.style.display='none'; scanner.innerHTML=`
+      <div class="overlay-card hw-wide"><div class="overlay-header"><strong>📷 Escanear Jack</strong><button class="close-x" id="hwQrClose">✕</button></div>
+      <div class="hw-scan-frame"><video id="hwQrVideo" class="hw-scan-video" playsinline muted></video></div>
+      <div id="hwQrStatus" class="hw-muted" style="margin-top:8px;">Apunta al QR del Jack.</div>
+      <button class="btn-secondary btn-block" id="hwQrCancel" style="margin-top:10px;">Cancelar</button>
+      </div>`; document.body.appendChild(scanner);
+    document.getElementById('hwQrClose').onclick=stopQrScanner;
+    document.getElementById('hwQrCancel').onclick=stopQrScanner;
 
     const draw=document.createElement('div'); draw.id='hwDrawOverlay'; draw.className='overlay hw-overlay'; draw.style.display='none'; draw.innerHTML=`
       <div class="overlay-card hw-wide"><div class="overlay-header"><strong>🃏 Registrar cartas de la urna</strong><button class="close-x" id="hwDrawClose">✕</button></div>
-      <div id="hwDrawIntro" class="hw-muted"></div><div id="hwCardGrid" class="hw-cardgrid"></div>
+      <div id="hwDrawIntro" class="hw-muted"></div>
+      <div class="hw-muted" style="margin-top:5px;">Toque corto = +1 · mantener presionado = −1. Las repetidas sí se pueden registrar.</div>
+      <div id="hwCardGrid" class="hw-cardgrid"></div>
       <div class="total-line"><span>Seleccionadas</span><strong id="hwDrawCount">0/0</strong></div>
       <button class="btn-primary" id="hwDrawConfirm">Confirmar cartas</button>
       <button class="btn-secondary btn-block" id="hwDrawQuick" style="margin-top:8px;">⚡ Entrega rápida sin registrar cuáles</button>
@@ -587,11 +611,14 @@
       <div class="overlay-card hw-wide" style="max-height:90vh;overflow:auto;"><div class="overlay-header"><strong>🎃 Halloween 2026</strong><button class="close-x" id="hwDashClose">✕</button></div>
       <div id="hwSystemStatus" class="hw-muted"></div>
       <div class="hw-grid" id="hwStats"></div>
-      <div class="hw-section"><strong>Buscar Jack</strong><div class="hw-line" style="margin-top:8px;"><input id="hwLookupCode" type="text" placeholder="H26-XXXXXX"><button class="btn-secondary" id="hwLookupBtn">Buscar</button></div><div id="hwJackPanel"></div></div>
+      <div class="hw-section"><strong>Buscar Jack</strong><div class="hw-line" style="margin-top:8px;"><input id="hwLookupCode" type="text" placeholder="H26-XXXXXX"><button class="btn-secondary hw-scan-btn" id="hwLookupScan" title="Escanear QR">📷</button><button class="btn-secondary" id="hwLookupBtn">Buscar</button></div><div id="hwJackPanel"></div></div>
       <div class="hw-muted" style="margin-top:14px;">Configuración, inventario, lotes y respaldos están en ⚙️ Opciones.</div>
       </div>`; document.body.appendChild(dash);
-    document.getElementById('hwDashClose').onclick=()=>{dash.style.display='none'; document.getElementById('btnHalloweenMode')?.classList.remove('active');};
+    document.getElementById('hwDashClose').onclick=()=>{ clearDashboardTransient(); dash.style.display='none'; document.getElementById('btnHalloweenMode')?.classList.remove('active');};
     document.getElementById('hwLookupBtn').onclick=lookupJack;
+    document.getElementById('hwLookupScan').onclick=()=>openQrScanner(code=>{
+      const el=document.getElementById('hwLookupCode'); if(el)el.value=code; lookupJack();
+    });
 
     const mount=document.getElementById('hwOptionsMount');
     if(mount){
@@ -604,7 +631,11 @@
         </details>
         <details class="card" style="padding:12px;margin-bottom:8px;">
           <summary style="cursor:pointer;font-weight:700;">Jacks, respaldo y auditoría</summary>
+          <div id="hwModeStatus" class="hw-muted" style="margin-top:8px;">Modo: calculando…</div>
+          <button class="btn-secondary btn-block" id="hwModeToggle" style="margin-top:8px;">Cambiar modo</button>
           <div class="hw-line" style="margin-top:10px;"><input id="hwBatchCount" type="number" min="1" value="50"><button class="btn-secondary" id="hwGenerateBatch">Generar lote Jack</button></div>
+          <button class="btn-secondary btn-block" id="hwRestoreBatch" style="margin-top:8px;">↩️ Restaurar lote maestro de Jacks</button>
+          <input id="hwRestoreBatchFile" type="file" accept="application/json,.json" style="display:none;">
           <button class="btn-secondary btn-block" id="hwRecoverJacks" style="margin-top:8px;">📋 Recuperar / copiar Jacks existentes</button>
           <div id="hwBackupStatus" class="hw-muted" style="margin-top:8px;">Calculando respaldos…</div>
           <button class="btn-secondary btn-block" id="hwBackupBtn" style="margin-top:8px;">💾 Descargar respaldo JSON completo</button>
@@ -620,7 +651,10 @@
         </details>
       </div>`;
       document.getElementById('hwGenerateBatch').onclick=generateBatch;
+      document.getElementById('hwRestoreBatch').onclick=()=>document.getElementById('hwRestoreBatchFile').click();
+      document.getElementById('hwRestoreBatchFile').onchange=restoreBatchMasterFile;
       document.getElementById('hwRecoverJacks').onclick=recoverExistingJacks;
+      document.getElementById('hwModeToggle').onclick=toggleOperationalMode;
       document.getElementById('hwBackupBtn').onclick=downloadBackup;
       document.getElementById('hwImportBtn').onclick=()=>document.getElementById('hwImportFile').click();
       document.getElementById('hwImportFile').onchange=importBackupFile;
@@ -640,8 +674,9 @@
     const on=isHalloweenChannel();
     const b=document.getElementById('btnHalloweenMode'); if(b){ b.style.display=on?'flex':'none'; if(!on)b.classList.remove('active'); }
     const opt=document.getElementById('hwOptionsSection'); if(opt)opt.style.display=on?'block':'none';
-    if(on) refreshBackupStatus();
+    if(on){ refreshBackupStatus(); refreshOperationalMode(); }
     if(!on){
+      clearDashboardTransient(); clearSaleTransient(); stopQrScanner();
       const d=document.getElementById('hwDashboardOverlay'); if(d)d.style.display='none';
       const s=document.getElementById('hwSaleOverlay'); if(s)s.style.display='none';
       const dr=document.getElementById('hwDrawOverlay'); if(dr)dr.style.display='none';
@@ -690,6 +725,72 @@
   function showMsg(msg){ if(typeof showToast==='function')showToast(msg); else alert(msg); }
   function emitHalloweenEvent(type,detail={}){ document.dispatchEvent(new CustomEvent('hw:event',{detail:{type,fecha:new Date().toISOString(),...detail}})); }
 
+  function clearSaleTransient(){
+    UI.noJackConfirmUntil=0; clearTimeout(UI.noJackTimer); UI.noJackTimer=null;
+    const code=document.getElementById('hwSaleCode'); if(code)code.value='';
+    const status=document.getElementById('hwSaleCodeStatus'); if(status){status.textContent='Escribe o escanea el código; el sistema detecta si es nuevo o activo.';status.className='hw-muted';}
+    stopQrScanner();
+  }
+  function clearDashboardTransient(){
+    UI.currentJack=null;
+    const code=document.getElementById('hwLookupCode'); if(code)code.value='';
+    const panel=document.getElementById('hwJackPanel'); if(panel)panel.innerHTML='';
+    stopQrScanner();
+  }
+
+  function parseJackQr(raw){
+    const txt=String(raw||'').trim().toUpperCase();
+    const prefix=String(config.prefijo||'H26').toUpperCase().replace(/[^A-Z0-9]/g,'');
+    const re=new RegExp(prefix+'-[A-Z0-9]{4,20}');
+    const m=txt.match(re); return m?normalizeCode(m[0]):null;
+  }
+  function stopQrScanner(){
+    const st=UI.scanner;
+    if(st?.raf) cancelAnimationFrame(st.raf);
+    if(st?.stream) st.stream.getTracks().forEach(t=>t.stop());
+    UI.scanner=null;
+    const video=document.getElementById('hwQrVideo'); if(video){try{video.pause();}catch(_){} video.srcObject=null;}
+    const ov=document.getElementById('hwQrOverlay'); if(ov)ov.style.display='none';
+  }
+  async function openQrScanner(onCode){
+    stopQrScanner();
+    if(!navigator.mediaDevices?.getUserMedia){ alert('Este navegador no permite usar la cámara desde el HTML. Puedes escribir el código Jack manualmente.'); return; }
+    if(!('BarcodeDetector' in root)){ alert('Este navegador no tiene lector QR nativo. El código manual sigue funcionando. Prueba Chrome actualizado en Android.'); return; }
+    const ov=document.getElementById('hwQrOverlay'), video=document.getElementById('hwQrVideo'), status=document.getElementById('hwQrStatus');
+    try{
+      const formats=root.BarcodeDetector.getSupportedFormats?await root.BarcodeDetector.getSupportedFormats():['qr_code'];
+      if(formats?.length&&!formats.includes('qr_code')) throw new Error('El navegador no reporta soporte para QR');
+      const detector=new root.BarcodeDetector({formats:['qr_code']});
+      const stream=await navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:{ideal:'environment'},width:{ideal:1280},height:{ideal:720}}});
+      UI.scanner={stream,detector,onCode,busy:false,raf:null};
+      video.srcObject=stream; ov.style.display='flex'; status.textContent='Apunta al QR del Jack.';
+      await video.play();
+      let lastTry=0;
+      const loop=async(ts)=>{
+        const st=UI.scanner; if(!st)return;
+        if(!st.busy&&video.readyState>=2&&ts-lastTry>160){
+          lastTry=ts; st.busy=true;
+          try{
+            const found=await detector.detect(video);
+            if(found?.length){
+              const code=parseJackQr(found[0].rawValue||found[0].rawValueText||'');
+              if(code){
+                const cb=st.onCode; stopQrScanner(); if(navigator.vibrate)navigator.vibrate(45); cb?.(code); return;
+              }
+              status.textContent='Ese QR no parece ser un Jack. Sigue apuntando al código correcto.';
+            }
+          }catch(_){}
+          finally{if(UI.scanner)UI.scanner.busy=false;}
+        }
+        if(UI.scanner)UI.scanner.raf=requestAnimationFrame(loop);
+      };
+      UI.scanner.raf=requestAnimationFrame(loop);
+    }catch(e){
+      stopQrScanner(); alert('No se pudo abrir el escáner QR: '+e.message+'\\n\\nPuedes escribir el código manualmente.');
+    }
+  }
+  root.HalloweenQR=Object.freeze({scan:openQrScanner,stop:stopQrScanner,parse:parseJackQr});
+
   async function openSale(sale){
     UI.currentSale=await Core.getSale(sale.ventaId);
     const ov=document.getElementById('hwSaleOverlay'); ov.style.display='flex'; await renderSaleBody();
@@ -705,7 +806,7 @@
       ${rows||''}
       <div class="total-line"><span>Queda por aplicar</span><strong>${money(s.unallocated)}</strong></div>
       ${s.unallocated>0?`<div class="hw-section">
-        <div class="field"><label>Código Jack</label><input id="hwSaleCode" type="text" placeholder="H26-XXXXXX" autocomplete="off"><div id="hwSaleCodeStatus" class="hw-muted" style="min-height:18px;margin-top:4px;">Escribe el código; el sistema detecta si es nuevo o activo.</div></div>
+        <div class="field"><label>Código Jack</label><div class="hw-line"><input id="hwSaleCode" type="text" placeholder="H26-XXXXXX" autocomplete="off"><button class="btn-secondary hw-scan-btn" id="hwSaleScan" type="button" title="Escanear QR">📷</button></div><div id="hwSaleCodeStatus" class="hw-muted" style="min-height:18px;margin-top:4px;">Escribe o escanea el código; el sistema detecta si es nuevo o activo.</div></div>
         <div class="field" style="margin-top:8px;"><label>Monto para este Jack</label><input id="hwSaleAmount" type="number" min="0.01" step="0.01" value="${Number(s.unallocated).toFixed(2)}"></div>
         <button class="btn-primary" id="hwApplyJack">Aplicar a Jack</button>
         <button class="btn-secondary btn-block" id="hwNoJack" style="margin-top:8px;">Terminar sin aplicar a Jack</button>
@@ -714,6 +815,9 @@
     if(s.unallocated>0){
       document.getElementById('hwApplyJack').onclick=applySaleJack;
       document.getElementById('hwNoJack').onclick=noJackSale;
+      document.getElementById('hwSaleScan').onclick=()=>openQrScanner(code=>{
+        const el=document.getElementById('hwSaleCode'); if(!el)return; el.value=code; el.dispatchEvent(new Event('input',{bubbles:true}));
+      });
       let t=null; document.getElementById('hwSaleCode').addEventListener('input',()=>{ clearTimeout(t); t=setTimeout(updateSaleCodeStatus,180); });
     }
   }
@@ -767,15 +871,36 @@
     for(const c of inv){
       const b=document.createElement('button'); b.className='hw-cardpick'; b.type='button'; b.dataset.id=c.id;
       b.innerHTML=`<b>${escapeHtml(c.numero||c.id)} · ${escapeHtml(c.nombre)}</b><small>${c.rareza}${c.stock===null?'':' · stock '+c.stock}</small><span class="hw-count" style="display:none;">0</span>`;
-      b.onclick=()=>pickCard(c.id,b); grid.appendChild(b);
+      bindCardPickerButton(c.id,b); grid.appendChild(b);
     }
     document.getElementById('hwDrawOverlay').style.display='flex';
   }
 
+  function updateCardPickVisual(id,btn){
+    const n=UI.selectedCards.filter(x=>x===id).length; const badge=btn.querySelector('.hw-count');
+    btn.classList.toggle('sel',n>0); badge.style.display=n>0?'block':'none'; badge.textContent=String(n);
+    document.getElementById('hwDrawCount').textContent=`${UI.selectedCards.length}/${UI.drawContext?.count||0}`;
+  }
   function pickCard(id,btn){
     const need=UI.drawContext.count; if(UI.selectedCards.length>=need){ showMsg('Ya seleccionaste todas'); return; }
-    UI.selectedCards.push(id); const n=UI.selectedCards.filter(x=>x===id).length; btn.classList.add('sel'); const badge=btn.querySelector('.hw-count'); badge.style.display='block';badge.textContent=n;
-    document.getElementById('hwDrawCount').textContent=`${UI.selectedCards.length}/${need}`;
+    UI.selectedCards.push(id); updateCardPickVisual(id,btn);
+  }
+  function unpickCard(id,btn){
+    const idx=UI.selectedCards.lastIndexOf(id); if(idx<0){ showMsg('Esa carta está en 0'); return; }
+    UI.selectedCards.splice(idx,1); updateCardPickVisual(id,btn);
+  }
+  function bindCardPickerButton(id,btn){
+    let timer=null,startX=0,startY=0,moved=false,longDone=false;
+    const clear=()=>{if(timer){clearTimeout(timer);timer=null;}};
+    btn.addEventListener('pointerdown',e=>{
+      startX=e.clientX; startY=e.clientY; moved=false; longDone=false; clear();
+      timer=setTimeout(()=>{timer=null;if(moved)return;longDone=true;unpickCard(id,btn);if(navigator.vibrate)navigator.vibrate(30);},650);
+    });
+    btn.addEventListener('pointermove',e=>{if(Math.abs(e.clientX-startX)>9||Math.abs(e.clientY-startY)>9){moved=true;clear();}});
+    btn.addEventListener('pointerup',e=>{clear();if(!moved&&!longDone)pickCard(id,btn);e.preventDefault();});
+    btn.addEventListener('pointercancel',clear);
+    btn.addEventListener('pointerleave',clear);
+    btn.addEventListener('contextmenu',e=>e.preventDefault());
   }
 
   async function confirmDraw(){
@@ -858,6 +983,42 @@
     await Core.saveReportedOwned(snapshot.codigo,ids); showMsg(`Estado declarado: ${ids.length}/17`); await lookupJack();
   }
 
+  async function refreshOperationalMode(){
+    const st=document.getElementById('hwModeStatus'), btn=document.getElementById('hwModeToggle'), reset=document.getElementById('hwResetTests');
+    if(!st||!UI.initialized)return;
+    const mode=await Core.getOperationalMode();
+    if(mode==='produccion'){
+      st.innerHTML='Modo: <b class="hw-ok">🔒 PRODUCCIÓN 2026</b> · borrar pruebas bloqueado';
+      if(btn)btn.textContent='Volver a modo pruebas';
+      if(reset){reset.disabled=true;reset.style.opacity='.45';}
+    }else{
+      st.innerHTML='Modo: <b>🧪 PRUEBAS</b> · puedes limpiar y volver a empezar';
+      if(btn)btn.textContent='🔒 Activar PRODUCCIÓN 2026';
+      if(reset){reset.disabled=false;reset.style.opacity='1';}
+    }
+  }
+  async function toggleOperationalMode(){
+    try{
+      const mode=await Core.getOperationalMode();
+      if(mode==='produccion'){
+        const typed=prompt('Esto sólo desbloquea las herramientas de prueba; no borra nada.\\n\\nEscribe VOLVER A PRUEBAS:','');
+        if(String(typed||'').trim().toUpperCase()!=='VOLVER A PRUEBAS'){showMsg('Cancelado');return;}
+        await Core.setOperationalMode('pruebas');
+      }else{
+        const typed=prompt('En PRODUCCIÓN se bloquea Borrar temporada de prueba.\\n\\nEscribe PRODUCCION 2026 para activar:','');
+        if(String(typed||'').trim().toUpperCase()!=='PRODUCCION 2026'){showMsg('Cancelado');return;}
+        await Core.setOperationalMode('produccion');
+      }
+      await refreshOperationalMode(); showMsg('Modo actualizado');
+    }catch(e){alert(e.message);}
+  }
+
+  function downloadJsonFile(filename,data){
+    const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json;charset=utf-8'});
+    const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=filename; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(a.href),1500);
+  }
+
   function downloadPlainText(filename,text){
     const blob=new Blob([text],{type:'text/plain;charset=utf-8'});
     const a=document.createElement('a');
@@ -873,7 +1034,7 @@
 
   async function generateBatch(){
     const n=Math.floor(Number(document.getElementById('hwBatchCount').value)||0); if(n<1)return;
-    if(!confirm(`Generar ${n} códigos Jack nuevos para impresión?`))return;
+    if(!confirm(`Generar ${n} códigos Jack nuevos para impresión?\n\nEl sistema descargará un JSON MAESTRO del lote. Guárdalo: permite volver a registrar exactamente estos códigos si alguna vez se pierde la base.`))return;
     let out;
     try{
       out=await Folios.generarLote(n,config.prefijo);
@@ -882,15 +1043,39 @@
       return;
     }
 
-    const text=['codigo\tlote',...out.codigos.map(c=>`${c}\t${out.lote}`)].join('\n');
+    const text=['codigo\tlote\tqr',...out.codigos.map(c=>`${c}\t${out.lote}\t${c}`)].join('\n');
+    let master=null;
+    try{
+      const exp=await Folios.exportar(), wanted=new Set(out.codigos);
+      master={...exp,kind:'HW2026_JACK_BATCH_MASTER',batch:{lote:out.lote,prefijo:out.prefijo,cantidad:out.cantidad,creadoEn:new Date().toISOString()},folios:(exp.folios||[]).filter(f=>wanted.has(f.codigo))};
+      downloadJsonFile(`Jacks_${out.lote}_MAESTRO.json`,master);
+    }catch(e){
+      alert('Los Jacks sí se crearon, pero NO pude descargar el maestro del lote. Antes de imprimir, usa Recuperar / copiar Jacks existentes y descarga un respaldo JSON completo.\n\n'+e.message);
+    }
+
     const copied=await safeCopy(text);
     if(copied){
-      alert(`${out.codigos.length} códigos Jack CREADOS correctamente y copiados al portapapeles.\nLote: ${out.lote}`);
+      alert(`${out.codigos.length} códigos Jack CREADOS y copiados para impresión.\nLote: ${out.lote}\n\nTambién se intentó descargar Jacks_${out.lote}_MAESTRO.json. No lo borres después de imprimir.`);
     }else{
       downloadPlainText(`Jacks_${out.lote}.txt`,text);
-      alert(`${out.codigos.length} códigos Jack CREADOS correctamente.\n\nEl navegador no permitió copiar al portapapeles, así que descargué Jacks_${out.lote}.txt.\nLote: ${out.lote}`);
+      alert(`${out.codigos.length} códigos Jack CREADOS.\n\nEl portapapeles falló, así que descargué un TXT con código/lote/valor QR.\nLote: ${out.lote}`);
     }
     await refreshStats();
+  }
+
+  async function restoreBatchMasterFile(ev){
+    const input=ev.target, file=input.files?.[0]; if(!file)return;
+    try{
+      const data=JSON.parse(await file.text());
+      if(data.kind!=='HW2026_JACK_BATCH_MASTER' || !Array.isArray(data.folios)) throw new Error('Ese archivo no parece ser un maestro de lote Jack.');
+      const a=await Folios.analizarImportacion(data);
+      const lote=data.batch?.lote||data.folios?.[0]?.lote||'sin lote';
+      if(!confirm(`Restaurar lote ${lote}\n\nCódigos del archivo: ${data.folios.length}\nNuevos en este dispositivo: ${a.nuevos}\nYa iguales: ${a.iguales}\nLocal con más historia: ${a.localMasNuevo}\nConflictos: ${a.conflictos}\n\nLa restauración fusiona: no hace retroceder Jacks locales con más historia.`)){return;}
+      const out=await Folios.aplicarImportacion(data,{confirmado:true,resolverConflictos:'mantener_local'});
+      alert(`Lote restaurado/fusionado.\nCódigos aplicados: ${out.aplicados}\nLos Jacks locales con más historia se conservaron.`);
+      await refreshStats();
+    }catch(e){alert('No se pudo restaurar el lote: '+e.message);}
+    finally{input.value='';}
   }
 
   async function recoverExistingJacks(){
