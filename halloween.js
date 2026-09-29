@@ -8,7 +8,7 @@
 (function(root){
   'use strict';
 
-  const APP_VERSION = '0.4.2';
+  const APP_VERSION = '0.4.3';
   const DB_NAME = 'halloween_2026';
   const DB_VERSION = 1;
   const STORES = Object.freeze({
@@ -635,7 +635,7 @@
       .hw-cardpick{background:var(--surface-2);color:var(--text);border:1px solid var(--border);padding:9px 7px;font-size:12px;position:relative}
       .hw-cardpick.sel{outline:2px solid var(--accent)}.hw-cardpick small{display:block;color:var(--text-muted);font-weight:500}
       .hw-count{position:absolute;top:3px;right:4px;background:var(--accent);color:var(--accent-ink);border-radius:10px;padding:1px 6px;font-size:10px}
-      .hw-overlay{z-index:220}.hw-wide{max-width:440px}.hw-line{display:flex;gap:8px;align-items:center}.hw-line>*{flex:1}
+      .hw-overlay{z-index:220}.hw-wide{max-width:440px}#hwQrOverlay{z-index:10000!important;background:rgba(0,0,0,.88)!important}.hw-line{display:flex;gap:8px;align-items:center}.hw-line>*{flex:1}
       .hw-danger{color:var(--danger)}.hw-ok{color:var(--ok)}.hw-section{margin-top:14px;padding-top:12px;border-top:1px solid var(--border)}
       .hw-pill{display:inline-block;padding:3px 8px;border-radius:20px;background:var(--surface-2);font-size:11px;margin:2px}
       .hw-scan-video{width:100%;aspect-ratio:3/4;max-height:60vh;object-fit:cover;background:#000;border-radius:12px;border:1px solid var(--border)}
@@ -708,6 +708,8 @@
           <button class="btn-secondary btn-block" id="hwRestoreBatch" style="margin-top:8px;">↩️ Restaurar lote maestro de Jacks</button>
           <input id="hwRestoreBatchFile" type="file" accept="application/json,.json" style="display:none;">
           <button class="btn-secondary btn-block" id="hwRecoverJacks" style="margin-top:8px;">📋 Recuperar / copiar Jacks existentes</button>
+          <button class="btn-secondary btn-block" id="hwCopyJackRegistry" style="margin-top:8px;">📋 Copiar padrón de Jacks para Sheets</button>
+          <div class="hw-muted" style="margin-top:8px;line-height:1.45;">Capas de seguridad: <b>paquete maestro del lote</b> (identidad física) · <b>JSON completo</b> (estado e historial) · <b>Sheets</b> (padrón + movimientos).</div>
           <div id="hwBackupStatus" class="hw-muted" style="margin-top:8px;">Calculando respaldos…</div>
           <button class="btn-secondary btn-block" id="hwBackupBtn" style="margin-top:8px;">💾 Descargar respaldo JSON completo</button>
           <button class="btn-secondary btn-block" id="hwImportBtn" style="margin-top:8px;">↩️ Importar JSON · fusionar sin borrar</button>
@@ -725,6 +727,7 @@
       document.getElementById('hwRestoreBatch').onclick=()=>document.getElementById('hwRestoreBatchFile').click();
       document.getElementById('hwRestoreBatchFile').onchange=restoreBatchMasterFile;
       document.getElementById('hwRecoverJacks').onclick=recoverExistingJacks;
+      document.getElementById('hwCopyJackRegistry').onclick=copyJackRegistry;
       document.getElementById('hwModeToggle').onclick=toggleOperationalMode;
       document.getElementById('hwBackupBtn').onclick=downloadBackup;
       document.getElementById('hwImportBtn').onclick=()=>document.getElementById('hwImportFile').click();
@@ -852,10 +855,12 @@
   }
 
   function parseJackQr(raw){
-    const txt=String(raw||'').trim().toUpperCase();
+    // Tolerante a espacios, guiones tipográficos y texto alrededor; la existencia real
+    // del Jack se valida después contra Folios. Evita rechazar un QR bueno por formato.
+    const txt=String(raw||'').trim().toUpperCase().replace(/[–—−]/g,'-');
     const prefix=String(config.prefijo||'H26').toUpperCase().replace(/[^A-Z0-9]/g,'');
-    const re=new RegExp(prefix+'-[A-Z0-9]{4,20}');
-    const m=txt.match(re); return m?normalizeCode(m[0]):null;
+    const re=new RegExp(prefix+'[\\s\\-_:]*([A-Z0-9]{4,20})');
+    const m=txt.match(re); return m?normalizeCode(prefix+'-'+m[1]):null;
   }
   function stopQrScanner(){
     const st=UI.scanner;
@@ -876,7 +881,7 @@
       const detector=new root.BarcodeDetector({formats:['qr_code']});
       const stream=await navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:{ideal:'environment'},width:{ideal:1280},height:{ideal:720}}});
       UI.scanner={stream,detector,onCode,busy:false,raf:null};
-      video.srcObject=stream; ov.style.display='flex'; status.textContent='Apunta al QR del Jack.';
+      video.srcObject=stream; ov.style.display='flex'; ov.style.zIndex='10000'; status.textContent='Apunta al QR del Jack.';
       await video.play();
       let lastTry=0;
       const loop=async(ts)=>{
@@ -888,9 +893,14 @@
             if(found?.length){
               const code=parseJackQr(found[0].rawValue||found[0].rawValueText||'');
               if(code){
-                const cb=st.onCode; stopQrScanner(); if(navigator.vibrate)navigator.vibrate(45); cb?.(code); return;
+                const valid=await Folios.validar(code);
+                if(valid?.existe){
+                  const cb=st.onCode; stopQrScanner(); if(navigator.vibrate)navigator.vibrate(45); cb?.(code); return;
+                }
+                status.textContent='QR leído: '+code+' · ese código no está registrado en esta base. Sigue apuntando o cancela.';
+              }else{
+                status.textContent='Ese QR no contiene un código Jack reconocible. Sigue apuntando al código correcto.';
               }
-              status.textContent='Ese QR no parece ser un Jack. Sigue apuntando al código correcto.';
             }
           }catch(_){}
           finally{if(UI.scanner)UI.scanner.busy=false;}
@@ -1035,7 +1045,7 @@
 
   async function refreshStats(){
     try{ const s=await Core.summary(); document.getElementById('hwStats').innerHTML=`
-      <div class="hw-stat"><b>${s.jacksActivos}</b><span>Jacks</span></div><div class="hw-stat"><b>${money(s.acumuladoTotal)}</b><span>acumulado</span></div><div class="hw-stat"><b>${s.eventos}</b><span>eventos</span></div>`; }
+      <div class="hw-stat"><b>${s.jacksActivos}</b><span>Jacks</span></div><div class="hw-stat"><b>${money(s.acumuladoTotal)}</b><span>acumulado</span></div><div class="hw-stat"><b>${s.eventos}</b><span>movimientos</span></div>`; }
     catch(e){console.error(e);}
   }
 
@@ -1058,6 +1068,18 @@
     };p.appendChild(save);
   }
 
+  function bindHoldButton(btn,ms,action){
+    if(!btn)return;
+    let timer=null,moved=false,startX=0,startY=0,done=false;
+    const clear=()=>{if(timer){clearTimeout(timer);timer=null;}};
+    btn.addEventListener('pointerdown',e=>{
+      moved=false;done=false;startX=e.clientX;startY=e.clientY;clear();
+      timer=setTimeout(async()=>{timer=null;if(moved||done)return;done=true;if(navigator.vibrate)navigator.vibrate(35);try{await action();}catch(err){alert(err.message||String(err));}},ms);
+    });
+    btn.addEventListener('pointermove',e=>{if(Math.abs(e.clientX-startX)>10||Math.abs(e.clientY-startY)>10){moved=true;clear();}});
+    btn.addEventListener('pointerup',clear);btn.addEventListener('pointercancel',clear);btn.addEventListener('pointerleave',clear);btn.addEventListener('contextmenu',e=>e.preventDefault());
+  }
+
   async function lookupJack(){
     const code=document.getElementById('hwLookupCode').value;
     try{
@@ -1071,20 +1093,59 @@
           const items=(x.items||[]).map(i=>`<div class="sale-meta">${escapeHtml(i.nombre)} · ${i.cantidad} × ${money(i.precio)} = ${money(i.total)}</div>`).join('')||'<div class="sale-meta">Detalle de productos no disponible en esta venta antigua.</div>';
           return `<div style="padding:8px 0;border-bottom:1px solid var(--border);"><div style="display:flex;justify-content:space-between;gap:8px;"><b>${escapeHtml(x.fecha||x.createdAt||'')}</b><b>+${money(x.aplicado)}</b></div>${items}<div class="hw-muted">Cuenta completa: ${money(x.total)} · ${escapeHtml(x.ventaId)}</div></div>`;
         }).join('')}</div></details>`:'';
-      p.innerHTML=`<div class="card hw-card" style="margin-top:10px;"><b>${escapeHtml(s.codigo)}</b> <span class="hw-pill">${escapeHtml(s.estado)}</span>
+
+      const pendingBlock=s.freePending>0
+        ? `<button class="btn-secondary btn-block" id="hwDeliverPending" style="margin-top:10px;">🎴 Entregar sobres pendientes (${s.freePending})</button>`
+        : `<div class="total-line"><span>Sobres pendientes</span><strong class="hw-ok">✅ 0</strong></div>`;
+
+      const catrinaBlock=s.profile.catrina
+        ? `<div class="total-line"><span>Catrina</span><strong class="hw-ok">✅ Entregada</strong></div>
+           <button class="btn-secondary btn-block" id="hwCatrinaUndo" style="margin-top:6px;font-size:12px;opacity:.82;">Mantén presionado para corregir Catrina</button>`
+        : `<div class="total-line"><span>Catrina</span><strong>Pendiente</strong></div>
+           <button class="btn-secondary btn-block" id="hwCatrinaMark" style="margin-top:6px;">Confirmar entrega de Catrina</button>`;
+
+      const redeemed=s.estado==='canjeada';
+      const redeemBlock=redeemed
+        ? `<div class="hw-section"><div style="font-weight:800;font-size:15px;" class="hw-ok">✅ CANJE FINAL REALIZADO</div>
+           <div class="total-line"><span>Bolo</span><strong>${escapeHtml(s.nivel||'sin nivel')}</strong></div>
+           <div class="total-line"><span>Charro Negro</span><strong class="hw-ok">${s.profile.charro?'✅ Entregado':'✅ Registrado con canje'}</strong></div>
+           <div class="total-line"><span>Jack físico</span><strong class="hw-ok">✅ Presentado</strong></div>
+           <div class="hw-muted">${escapeHtml(niceDate(s.fechas?.canjeada))}</div></div>`
+        : `<div class="hw-section"><div class="field-row"><input type="checkbox" id="hwPhysical"><label for="hwPhysical" style="font-size:13px;color:var(--text);">Jack físico presentado</label></div>
+           <button class="btn-primary" id="hwRedeem">Canje final: bolo + Charro</button></div>`;
+
+      p.innerHTML=`<div class="card hw-card" style="margin-top:10px;"><div style="display:flex;align-items:center;justify-content:space-between;gap:8px;"><b>${escapeHtml(s.codigo)}</b><span class="hw-pill">${escapeHtml(s.estado)}</span></div>
         <div class="total-line"><span>Acumulado</span><strong>${money(s.acumulado)}</strong></div>
         <div class="total-line"><span>Nivel</span><strong>${escapeHtml(s.nivel||'sin nivel')}</strong></div>
-        <div class="total-line"><span>Cartas gratis</span><strong>${s.profile.freeDelivered}/${s.freeEarned}${s.freePending?` · ${s.freePending} pendientes`:''}</strong></div>
-        <div class="hw-muted">Diseños registrados por el puesto: ${unique.length}/17. El álbum físico manda después de intercambios.</div>
+        <div class="total-line"><span>Sobres/cartas entregadas</span><strong>${s.profile.freeDelivered}/${s.freeEarned}</strong></div>
+        ${pendingBlock}
+        <div class="hw-section">${catrinaBlock}</div>
+        ${redeemBlock}
+        <div class="hw-muted" style="margin-top:10px;">Diseños registrados por el puesto: ${unique.length}/17. El álbum físico manda después de intercambios.</div>
         ${salesHtml}
-        <div class="hw-line" style="margin-top:10px;"><button class="btn-secondary" id="hwDeliverPending">Entregar pendientes</button><button class="btn-secondary" id="hwToggleCatrina">${s.profile.catrina?'✓ Catrina':'Marcar Catrina'}</button></div>
-        <div class="field-row"><input type="checkbox" id="hwPhysical"><label for="hwPhysical" style="font-size:13px;color:var(--text);">Jack físico presentado</label></div>
-        <button class="btn-primary" id="hwRedeem">Canje final: bolo + Charro</button>
         <button class="btn-secondary btn-block" id="hwAlbumState" style="margin-top:8px;">Actualizar cartas que dice tener ahora</button>
       </div>`;
-      document.getElementById('hwDeliverPending').onclick=()=>{ if(s.freePending>0)openDraw({codigo:s.codigo,ventaId:null,count:s.freePending,anonymous:false});else showMsg('No tiene cartas pendientes'); };
-      document.getElementById('hwToggleCatrina').onclick=async()=>{await Core.markCatrina(s.codigo,!s.profile.catrina);emitHalloweenEvent('catrina_cambio',{codigo:s.codigo,entregada:!s.profile.catrina});await lookupJack();};
-      document.getElementById('hwRedeem').onclick=async()=>{ try{const out=await Core.redeem(s.codigo,document.getElementById('hwPhysical').checked);if(out.yaCanjeada)alert('⚠️ Este Jack YA FUE CANJEADO.');else {emitHalloweenEvent('canje_31',{codigo:s.codigo,acumulado:out.result.acumulado,nivel:out.result.nivel,charro:true});alert(`ENTREGAR: Bolo ${out.result.nivel||''} + Charro Negro\nAcumulado: ${money(out.result.acumulado)}`);}await lookupJack();await refreshStats();}catch(e){alert(e.message);} };
+
+      document.getElementById('hwDeliverPending')?.addEventListener('click',()=>openDraw({codigo:s.codigo,ventaId:null,count:s.freePending,anonymous:false}));
+      document.getElementById('hwCatrinaMark')?.addEventListener('click',async()=>{
+        if(!confirm(`Confirmar que entregaste la Catrina al Jack ${s.codigo}?`))return;
+        await Core.markCatrina(s.codigo,true);emitHalloweenEvent('catrina_cambio',{codigo:s.codigo,entregada:true});await lookupJack();
+      });
+      bindHoldButton(document.getElementById('hwCatrinaUndo'),900,async()=>{
+        if(!confirm(`CORRECCIÓN: ¿revertir la entrega de Catrina de ${s.codigo}?`))return;
+        await Core.markCatrina(s.codigo,false);emitHalloweenEvent('catrina_cambio',{codigo:s.codigo,entregada:false});await lookupJack();
+      });
+      document.getElementById('hwRedeem')?.addEventListener('click',async()=>{
+        try{
+          const physical=document.getElementById('hwPhysical')?.checked===true;
+          if(!physical){alert('Marca primero que el Jack físico fue presentado.');return;}
+          if(!confirm(`CANJE FINAL\n\nJack: ${s.codigo}\nAcumulado: ${money(s.acumulado)}\nNivel: ${s.nivel||'sin nivel'}\n\nEsto registra Bolo + Charro Negro y después ya no mostrará el botón de canje. ¿Confirmar?`))return;
+          const out=await Core.redeem(s.codigo,true);
+          if(out.yaCanjeada)alert('⚠️ Este Jack YA FUE CANJEADO.');
+          else {emitHalloweenEvent('canje_31',{codigo:s.codigo,acumulado:out.result.acumulado,nivel:out.result.nivel,charro:true});alert(`CANJE REGISTRADO\n\nEntregar: Bolo ${out.result.nivel||''} + Charro Negro\nAcumulado: ${money(out.result.acumulado)}`);}
+          await lookupJack();await refreshStats();
+        }catch(e){alert(e.message);}
+      });
       document.getElementById('hwAlbumState').onclick=()=>openAlbumState(s);
     }catch(e){alert(e.message);}
   }
@@ -1126,17 +1187,17 @@
     }catch(e){alert(e.message);}
   }
 
-  function downloadJsonFile(filename,data){
-    const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json;charset=utf-8'});
+  function downloadBlobFile(filename,blob){
     const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=filename; document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(()=>URL.revokeObjectURL(a.href),1500);
+    setTimeout(()=>URL.revokeObjectURL(a.href),2500);
+  }
+
+  function downloadJsonFile(filename,data){
+    downloadBlobFile(filename,new Blob([JSON.stringify(data,null,2)],{type:'application/json;charset=utf-8'}));
   }
 
   function downloadPlainText(filename,text){
-    const blob=new Blob([text],{type:'text/plain;charset=utf-8'});
-    const a=document.createElement('a');
-    a.href=URL.createObjectURL(blob); a.download=filename; document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(()=>URL.revokeObjectURL(a.href),1500);
+    downloadBlobFile(filename,new Blob([text],{type:'text/plain;charset=utf-8'}));
   }
 
   async function safeCopy(text){
@@ -1145,35 +1206,127 @@
     catch(_){ return false; }
   }
 
+  function qrSvgForCode(code){
+    if(typeof root.HWQRCode!=='function'||!root.HWQRErrorCorrectLevel) throw new Error('El generador QR local no cargó. Recarga la página antes de crear un lote.');
+    const qr=new root.HWQRCode(0,root.HWQRErrorCorrectLevel.M);
+    qr.addData(String(code)); qr.make();
+    const n=qr.getModuleCount(), quiet=4, total=n+quiet*2;
+    let d='';
+    for(let r=0;r<n;r++) for(let c=0;c<n;c++) if(qr.isDark(r,c)) d+=`M${c+quiet} ${r+quiet}h1v1h-1z`;
+    return `<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${total} ${total}" shape-rendering="crispEdges"><rect width="100%" height="100%" fill="#fff"/><path d="${d}" fill="#000"/></svg>\n`;
+  }
+
+  async function sha256Hex(text){
+    try{
+      if(!crypto?.subtle)return null;
+      const hash=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(String(text)));
+      return [...new Uint8Array(hash)].map(b=>b.toString(16).padStart(2,'0')).join('');
+    }catch(_){return null;}
+  }
+
+  let CRC_TABLE=null;
+  function crc32(bytes){
+    if(!CRC_TABLE){
+      CRC_TABLE=new Uint32Array(256);
+      for(let n=0;n<256;n++){let c=n;for(let k=0;k<8;k++)c=(c&1)?(0xEDB88320^(c>>>1)):(c>>>1);CRC_TABLE[n]=c>>>0;}
+    }
+    let c=0xFFFFFFFF; for(const b of bytes)c=CRC_TABLE[(c^b)&0xFF]^(c>>>8); return (c^0xFFFFFFFF)>>>0;
+  }
+  function put16(a,o,v){a[o]=v&255;a[o+1]=(v>>>8)&255;}
+  function put32(a,o,v){a[o]=v&255;a[o+1]=(v>>>8)&255;a[o+2]=(v>>>16)&255;a[o+3]=(v>>>24)&255;}
+  function concatBytes(parts){const len=parts.reduce((n,p)=>n+p.length,0),out=new Uint8Array(len);let o=0;for(const p of parts){out.set(p,o);o+=p.length;}return out;}
+  function makeStoredZip(entries){
+    const enc=new TextEncoder(), locals=[], centrals=[]; let offset=0;
+    for(const ent of entries){
+      const name=enc.encode(ent.name), data=ent.data instanceof Uint8Array?ent.data:enc.encode(String(ent.data)), crc=crc32(data);
+      const lh=new Uint8Array(30+name.length); put32(lh,0,0x04034b50);put16(lh,4,20);put16(lh,6,0x0800);put16(lh,8,0);put16(lh,10,0);put16(lh,12,0);put32(lh,14,crc);put32(lh,18,data.length);put32(lh,22,data.length);put16(lh,26,name.length);put16(lh,28,0);lh.set(name,30);
+      locals.push(lh,data);
+      const ch=new Uint8Array(46+name.length); put32(ch,0,0x02014b50);put16(ch,4,20);put16(ch,6,20);put16(ch,8,0x0800);put16(ch,10,0);put16(ch,12,0);put16(ch,14,0);put32(ch,16,crc);put32(ch,20,data.length);put32(ch,24,data.length);put16(ch,28,name.length);put16(ch,30,0);put16(ch,32,0);put16(ch,34,0);put16(ch,36,0);put32(ch,38,0);put32(ch,42,offset);ch.set(name,46);centrals.push(ch);
+      offset+=lh.length+data.length;
+    }
+    const central=concatBytes(centrals), end=new Uint8Array(22); put32(end,0,0x06054b50);put16(end,4,0);put16(end,6,0);put16(end,8,entries.length);put16(end,10,entries.length);put32(end,12,central.length);put32(end,16,offset);put16(end,20,0);
+    return new Blob([...locals,central,end],{type:'application/zip'});
+  }
+
+  function csvCell(v){const s=String(v??'');return /[",\n\r]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s;}
+
   async function generateBatch(){
     const n=Math.floor(Number(document.getElementById('hwBatchCount').value)||0); if(n<1)return;
-    if(!confirm(`Generar ${n} códigos Jack nuevos para impresión?\n\nEl sistema descargará un JSON MAESTRO del lote. Guárdalo: permite volver a registrar exactamente estos códigos si alguna vez se pierde la base.`))return;
+    if(typeof root.HWQRCode!=='function'||!root.HWQRErrorCorrectLevel){alert('El generador QR local no cargó. Recarga la página. No se creó ningún Jack.');return;}
+    const mode=await Core.getOperationalMode();
+    const isProd=mode==='produccion';
+    const label=isProd?'PRODUCCIÓN':'PRUEBAS';
+    const warning=isProd?'Estos códigos serán candidatos a impresión real. Guarda el paquete antes de imprimir.':'Este lote es de PRUEBA. Se borrará al limpiar la temporada y NO debe imprimirse como producción.';
+    if(!confirm(`Generar ${n} Jacks en modo ${label}?\n\n${warning}\n\nCada Jack nacerá en la base y el paquete incluirá su QR SVG, CSV y MAESTRO.json.`))return;
+
     let out;
+    try{ out=await Folios.generarLote(n,config.prefijo); }
+    catch(e){ alert('No se pudieron crear los Jacks: '+e.message); return; }
+
+    let master=null,zipName=null;
     try{
-      out=await Folios.generarLote(n,config.prefijo);
+      const exp=await Folios.exportar(), wanted=new Set(out.codigos), created=new Date().toISOString();
+      const fullBackup=await Core.exportAll();
+      const fingerprint=await sha256Hex(out.codigos.slice().sort().join('\n'));
+      master={...exp,kind:'HW2026_JACK_BATCH_MASTER',batch:{lote:out.lote,prefijo:out.prefijo,cantidad:out.cantidad,creadoEn:created,modo:mode,fingerprintSha256:fingerprint,qr:{contenido:'codigo',formato:'SVG',correccion:'M',margenModulos:4}},folios:(exp.folios||[]).filter(f=>wanted.has(f.codigo))};
+      const rows=[['codigo','lote','estado','qr_archivo','qr_contenido','modo']];
+      const entries=[];
+      for(const code of out.codigos){
+        const svg=qrSvgForCode(code); entries.push({name:`QR/${code}.svg`,data:svg});
+        rows.push([code,out.lote,'impresa',`QR/${code}.svg`,code,mode]);
+      }
+      const csv=rows.map(r=>r.map(csvCell).join(',')).join('\r\n')+'\r\n';
+      const prefix=isProd?'PRODUCCION':'PRUEBA';
+      const base=`${prefix}_Jacks_${out.lote}`;
+      const readme=[
+        'JUGAAD HALLOWEEN 2026 — PAQUETE JACK',
+        `Modo: ${label}`,
+        `Lote: ${out.lote}`,
+        `Cantidad: ${out.codigos.length}`,
+        `Creado: ${created}`,
+        fingerprint?`Huella SHA-256 de la lista de códigos: ${fingerprint}`:'Huella SHA-256: no disponible en este navegador',
+        '',
+        'ARCHIVOS:',
+        '- MAESTRO.json = identidad exacta de los Jacks físicos de este lote. CONSERVAR.',
+        '- Jacks.csv = relación código/lote/archivo QR para maquetación.',
+        '- RESPALDO_INICIAL.json = foto completa del sistema justo después de crear el lote.',
+        '- QR/*.svg = QR estándar, negro sobre blanco, contenido = código Jack.',
+        '',
+        isProd?'PRODUCCIÓN: guarda este ZIP en al menos dos lugares antes de imprimir.':'PRUEBAS: no imprimir como lote real; puede borrarse del sistema con Borrar temporada de prueba.',
+        'El QR es regenerable desde el código; el código Jack es el dato maestro.'
+      ].join('\n');
+      entries.unshift(
+        {name:'MAESTRO.json',data:JSON.stringify(master,null,2)+'\n'},
+        {name:'RESPALDO_INICIAL.json',data:JSON.stringify(fullBackup,null,2)+'\n'},
+        {name:'Jacks.csv',data:csv},
+        {name:'LEEME.txt',data:readme+'\n'}
+      );
+      const zip=makeStoredZip(entries); zipName=`${base}_IMPRESION.zip`; downloadBlobFile(zipName,zip);
+      await Core.markBackupNow(); await refreshBackupStatus();
+      UI.lastBatchMaster=master; UI.lastBatchZipName=zipName;
     }catch(e){
-      alert('No se pudieron crear los Jacks: '+e.message);
-      return;
+      console.error('batch package',e);
+      if(master){ try{downloadJsonFile(`Jacks_${out.lote}_MAESTRO_RECUPERACION.json`,master);}catch(_){} }
+      alert(`Los ${out.codigos.length} Jacks SÍ quedaron creados en la base, pero falló la creación/descarga del paquete de QR.\n\nNO IMPRIMAS todavía. Descarga un respaldo JSON completo y usa Recuperar Jacks antes de continuar.\n\n${e.message}`);
+      await refreshStats(); return;
     }
 
     const text=['codigo\tlote\tqr',...out.codigos.map(c=>`${c}\t${out.lote}\t${c}`)].join('\n');
-    let master=null;
-    try{
-      const exp=await Folios.exportar(), wanted=new Set(out.codigos);
-      master={...exp,kind:'HW2026_JACK_BATCH_MASTER',batch:{lote:out.lote,prefijo:out.prefijo,cantidad:out.cantidad,creadoEn:new Date().toISOString()},folios:(exp.folios||[]).filter(f=>wanted.has(f.codigo))};
-      downloadJsonFile(`Jacks_${out.lote}_MAESTRO.json`,master);
-    }catch(e){
-      alert('Los Jacks sí se crearon, pero NO pude descargar el maestro del lote. Antes de imprimir, usa Recuperar / copiar Jacks existentes y descarga un respaldo JSON completo.\n\n'+e.message);
-    }
-
     const copied=await safeCopy(text);
-    if(copied){
-      alert(`${out.codigos.length} códigos Jack CREADOS y copiados para impresión.\nLote: ${out.lote}\n\nTambién se intentó descargar Jacks_${out.lote}_MAESTRO.json. No lo borres después de imprimir.`);
-    }else{
-      downloadPlainText(`Jacks_${out.lote}.txt`,text);
-      alert(`${out.codigos.length} códigos Jack CREADOS.\n\nEl portapapeles falló, así que descargué un TXT con código/lote/valor QR.\nLote: ${out.lote}`);
-    }
+    alert(`${out.codigos.length} Jacks CREADOS en modo ${label}.\nLote: ${out.lote}\n\nPaquete: ${zipName}\nIncluye MAESTRO.json + RESPALDO_INICIAL.json + Jacks.csv + ${out.codigos.length} QR SVG.\n\n${isProd?'GUÁRDALO EN DOS LUGARES ANTES DE IMPRIMIR.':'Es un paquete de PRUEBA; no lo mezcles con producción.'}${copied?'\n\nLa lista también quedó copiada al portapapeles.':''}`);
     await refreshStats();
+  }
+
+  async function copyJackRegistry(){
+    try{
+      const data=await Folios.exportar();
+      const rows=(data.folios||[]).slice().sort((a,b)=>String(a.creadoEn||'').localeCompare(String(b.creadoEn||'')));
+      if(!rows.length){showMsg('No hay Jacks para copiar');return;}
+      const text=['codigo\tlote\testado\tacumulado\tcreadoEn\tentregadoEn\tcanjeadoEn',...rows.map(f=>[f.codigo||'',f.lote||'',f.estado||'',Number(f.acumulado||0),f.creadoEn||'',f.entregadoEn||'',f.canjeadoEn||''].join('\t'))].join('\n');
+      const ok=await safeCopy(text);
+      if(ok) alert(`${rows.length} Jacks copiados.\n\nPégalos en una pestaña del ERP/Sheets llamada, por ejemplo, Halloween_Jacks.`);
+      else downloadPlainText(`Halloween_Jacks_${new Date().toISOString().slice(0,10)}.tsv`,text);
+    }catch(e){alert('No se pudo copiar el padrón de Jacks: '+e.message);}
   }
 
   async function restoreBatchMasterFile(ev){
@@ -1181,6 +1334,11 @@
     try{
       const data=JSON.parse(await file.text());
       if(data.kind!=='HW2026_JACK_BATCH_MASTER' || !Array.isArray(data.folios)) throw new Error('Ese archivo no parece ser un maestro de lote Jack.');
+      const expectedHash=data.batch?.fingerprintSha256||null;
+      if(expectedHash){
+        const actualHash=await sha256Hex(data.folios.map(f=>normalizeCode(f.codigo)).sort().join('\n'));
+        if(actualHash && actualHash!==expectedHash) throw new Error('La huella del MAESTRO.json no coincide. El archivo pudo alterarse o dañarse. No se importó nada.');
+      }
       const a=await Folios.analizarImportacion(data);
       const lote=data.batch?.lote||data.folios?.[0]?.lote||'sin lote';
       if(!confirm(`Restaurar lote ${lote}\n\nCódigos del archivo: ${data.folios.length}\nNuevos en este dispositivo: ${a.nuevos}\nYa iguales: ${a.iguales}\nLocal con más historia: ${a.localMasNuevo}\nConflictos: ${a.conflictos}\n\nLa restauración fusiona: no hace retroceder Jacks locales con más historia.`)){return;}
@@ -1219,7 +1377,7 @@
 
       let jacks=0;
       try{ jacks=(await Folios.exportar()).folios?.length||0; }catch(_){}
-      const first=confirm(`Esto borrará la temporada de PRUEBA de este dispositivo.\n\nJacks actuales: ${jacks}\nTambién se borrarán acumulados, cartas, inventario y eventos Halloween.\nNO toca las ventas normales del ERP.\n\n¿Continuar?`);
+      const first=confirm(`Esto borrará la temporada de PRUEBA de este dispositivo.\n\nJacks actuales: ${jacks}\nTambién se borrarán acumulados, cartas, inventario y movimientos Halloween.\nNO toca las ventas normales del ERP.\nLos ZIP/JSON de prueba que ya descargaste NO se borran del teléfono/PC.\n\n¿Continuar?`);
       if(!first)return;
       const typed=prompt('Última protección. Escribe exactamente BORRAR PRUEBAS:','');
       if(String(typed||'').trim().toUpperCase()!=='BORRAR PRUEBAS'){ showMsg('Cancelado'); return; }
