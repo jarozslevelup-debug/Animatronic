@@ -8,7 +8,7 @@
 (function(root){
   'use strict';
 
-  const APP_VERSION = '0.4.0';
+  const APP_VERSION = '0.4.1';
   const DB_NAME = 'halloween_2026';
   const DB_VERSION = 1;
   const STORES = Object.freeze({
@@ -147,20 +147,78 @@
     return false;
   }
 
-  async function acquireWriterLock(){
-    // Un bloqueo sencillo entre pestañas del mismo navegador. No sustituye el respaldo.
+  function getWriterTabId(){
+    // Conserva la identidad al RECARGAR la misma pestaña, pero evita heredarla
+    // normalmente al abrir/duplicar otra pestaña. Así un refresh no queda 12 s
+    // bloqueado por su propio candado anterior.
+    const key='hw2026_tab_id';
+    let id=null;
+    try{
+      const nav=root.performance?.getEntriesByType?.('navigation')?.[0]?.type||'';
+      id=sessionStorage.getItem(key);
+      if(!id || nav!=='reload'){
+        id=uuid();
+        sessionStorage.setItem(key,id);
+      }
+    }catch(_){ id=writerLock.id||uuid(); }
+    return id;
+  }
+
+  async function acquireWriterLock(options={}){
+    // Bloqueo sencillo entre pestañas del mismo navegador. Es deliberadamente
+    // recuperable: la misma pestaña puede recargar sin perder permiso y, si el
+    // usuario lo decide, puede tomar control explícitamente desde la interfaz.
     const key='hw2026_writer_lock';
-    const id=uuid();
+    const id=getWriterTabId();
     const ttl=12000;
     const now=Date.now();
+    const force=!!options.force;
     let cur=null;
     try{ cur=JSON.parse(localStorage.getItem(key)||'null'); }catch(_){ }
-    if(cur && cur.expires>now && cur.id!==id) return {ok:false,holder:cur.id};
-    const write=()=>localStorage.setItem(key,JSON.stringify({id,expires:Date.now()+ttl}));
-    write();
-    writerLock={owned:true,id,timer:setInterval(write,5000)};
-    root.addEventListener('beforeunload',()=>{ try{ const c=JSON.parse(localStorage.getItem(key)||'null'); if(c&&c.id===id)localStorage.removeItem(key); }catch(_){} });
-    return {ok:true,id};
+    if(cur && cur.expires>now && cur.id!==id && !force){
+      writerLock.owned=false; writerLock.id=id;
+      return {ok:false,holder:cur.id,expires:cur.expires};
+    }
+
+    if(writerLock.timer){ clearInterval(writerLock.timer); writerLock.timer=null; }
+    const write=()=>{
+      try{
+        const current=JSON.parse(localStorage.getItem(key)||'null');
+        // Si otra pestaña tomó el control después, no se lo robamos de vuelta.
+        if(current && current.expires>Date.now() && current.id!==id){
+          writerLock.owned=false;
+          if(writerLock.timer){ clearInterval(writerLock.timer); writerLock.timer=null; }
+          return false;
+        }
+        localStorage.setItem(key,JSON.stringify({id,expires:Date.now()+ttl,version:APP_VERSION}));
+        writerLock.owned=true; writerLock.id=id;
+        return true;
+      }catch(_){
+        // Si localStorage falla, no bloqueamos todo Halloween por un candado
+        // auxiliar; IndexedDB y los IDs de operación siguen protegiendo datos.
+        writerLock.owned=true; writerLock.id=id;
+        return true;
+      }
+    };
+    // En toma de control explícita se reemplaza el candado actual una sola vez.
+    if(force){
+      try{ localStorage.setItem(key,JSON.stringify({id,expires:Date.now()+ttl,version:APP_VERSION})); }catch(_){}
+      writerLock.owned=true; writerLock.id=id;
+    }else write();
+    writerLock.timer=setInterval(write,5000);
+    const release=()=>{
+      try{ const c=JSON.parse(localStorage.getItem(key)||'null'); if(c&&c.id===id)localStorage.removeItem(key); }catch(_){}
+    };
+    root.addEventListener('pagehide',release,{once:true});
+    root.addEventListener('beforeunload',release,{once:true});
+    return {ok:true,id,forced:force};
+  }
+
+  async function requireWriter(){
+    if(writerLock.owned) return true;
+    const lock=await acquireWriterLock();
+    if(lock.ok) return true;
+    throw new Error('Otra pestaña tiene el control de escritura Halloween. Cierra la otra pestaña o usa “Tomar control aquí” en la pantalla 🎃.');
   }
 
   async function getProfile(codigo, create=true){
@@ -224,7 +282,7 @@
   }
 
   async function applyAllocation({ventaId,codigo,monto,nuevo}){
-    if(!writerLock.owned) throw new Error('Esta pestaña no tiene permiso de escritura Halloween.');
+    await requireWriter();
     const sale=await getSale(ventaId); if(!sale) throw new Error('Venta Halloween no encontrada.');
     const amount=Number(monto);
     if(!Number.isFinite(amount)||amount<=0) throw new Error('Monto inválido.');
@@ -430,7 +488,7 @@
   }
 
   async function importAllMerge(input){
-    if(!writerLock.owned) throw new Error('Esta pestaña no tiene permiso de escritura Halloween.');
+    await requireWriter();
     const data=parseFullBackup(input);
     const incoming=data.halloween||{};
     const current={};
@@ -518,10 +576,22 @@
   }
 
   async function clearFoliosForTests(){
+    // Limpiamos la MISMA base usada por folios_v2.js y verificamos después con
+    // su propia API. Así nunca mostramos “borrado” si los Jacks siguen ahí.
+    let before=0;
+    try{ before=(await Folios.exportar()).folios?.length||0; }catch(_){}
     const d=await new Promise((resolve,reject)=>{ const r=indexedDB.open('folios_HW2026'); r.onsuccess=()=>resolve(r.result); r.onerror=()=>reject(r.error||new Error('No se pudo abrir Folios')); });
-    const stores=['folios','meta','ventas'].filter(x=>d.objectStoreNames.contains(x));
-    if(stores.length){ const tx=d.transaction(stores,'readwrite'); for(const name of stores)tx.objectStore(name).clear(); await txPromise(tx); }
-    d.close();
+    try{
+      const stores=['folios','meta','ventas'].filter(x=>d.objectStoreNames.contains(x));
+      if(stores.length){
+        const tx=d.transaction(stores,'readwrite');
+        for(const name of stores) tx.objectStore(name).clear();
+        await txPromise(tx);
+      }
+    }finally{ d.close(); }
+    const after=(await Folios.exportar()).folios?.length||0;
+    if(after!==0) throw new Error(`La verificación encontró ${after} Jack(s) todavía guardados. No se reportó el borrado como exitoso.`);
+    return {before,after};
   }
 
   async function getOperationalMode(){
@@ -534,11 +604,12 @@
   }
 
   async function resetSeasonForTests(){
-    if(!writerLock.owned) throw new Error('Esta pestaña no tiene permiso de escritura Halloween.');
+    await requireWriter();
     if(await getOperationalMode()==='produccion') throw new Error('Modo PRODUCCIÓN activo. Vuelve deliberadamente a modo pruebas antes de borrar.');
     const names=Object.values(STORES); const tx=db.transaction(names,'readwrite'); for(const name of names)tx.objectStore(name).clear(); await txPromise(tx);
-    config={...DEFAULT_CONFIG}; await metaSet('config',config); await metaSet('operationalMode','pruebas'); await ensureInventory(); await clearFoliosForTests();
-    return {ok:true};
+    config={...DEFAULT_CONFIG}; await metaSet('config',config); await metaSet('operationalMode','pruebas'); await ensureInventory();
+    const foliosClear=await clearFoliosForTests();
+    return {ok:true,foliosBorrados:foliosClear.before};
   }
 
   async function configure(patch){ config={...config,...patch}; await metaSet('config',config); return clone(config); }
@@ -683,6 +754,21 @@
     }
   }
 
+  function renderWriterStatus(lock,recoveryCount=0){
+    const st=document.getElementById('hwSystemStatus'); if(!st)return;
+    if(lock?.ok){
+      st.innerHTML='✅ Escritura Halloween activa'+(recoveryCount?` · <span class="hw-danger">${recoveryCount} operación(es) a revisar</span>`:'');
+      return;
+    }
+    st.innerHTML='⚠️ Otra pestaña parece tener el control. <button type="button" class="btn-secondary" id="hwTakeWriter" style="padding:4px 8px;margin-left:5px;">Tomar control aquí</button>';
+    document.getElementById('hwTakeWriter')?.addEventListener('click',async()=>{
+      if(!confirm('Usa esto sólo si esta es la pestaña que vas a usar para vender. Si hay otra pestaña Halloween abierta, ciérrala.\n\n¿Tomar control de escritura aquí?'))return;
+      const got=await Core.acquireWriterLock({force:true});
+      renderWriterStatus(got,0);
+      showMsg('Control de Halloween tomado en esta pestaña');
+    });
+  }
+
   async function initUI(){
     try{
       injectStyles(); injectUI();
@@ -691,8 +777,7 @@
       const lock=await Core.acquireWriterLock();
       const rec=await Core.reconcileOps();
       UI.initialized=true;
-      const st=document.getElementById('hwSystemStatus');
-      if(st) st.innerHTML=(lock.ok?'✅ Escritor principal':'⚠️ Solo consulta: otra pestaña escribe')+(rec.length?` · <span class="hw-danger">${rec.length} operación(es) a revisar</span>`:'');
+      renderWriterStatus(lock,rec.length);
       updateHalloweenVisibility();
       await syncTodaySales();
       document.getElementById('canalSelect')?.addEventListener('change',updateHalloweenVisibility);
@@ -1099,7 +1184,10 @@
     if(!first)return;
     const typed=prompt('Escribe BORRAR PRUEBAS para confirmar:','');
     if(typed!=='BORRAR PRUEBAS'){ showMsg('Cancelado'); return; }
-    try{ await Core.resetSeasonForTests(); alert('Datos Halloween de prueba borrados. La página se recargará para iniciar limpia.'); location.reload(); }
+    try{ const out=await Core.resetSeasonForTests(); alert(`Datos Halloween de prueba borrados y verificados.
+Jacks eliminados: ${out.foliosBorrados||0}.
+
+La página se recargará para iniciar limpia.`); location.reload(); }
     catch(e){ alert('No se pudo borrar: '+e.message); }
   }
 
