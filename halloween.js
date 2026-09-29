@@ -8,7 +8,7 @@
 (function(root){
   'use strict';
 
-  const APP_VERSION = '0.4.1';
+  const APP_VERSION = '0.4.2';
   const DB_NAME = 'halloween_2026';
   const DB_VERSION = 1;
   const STORES = Object.freeze({
@@ -769,8 +769,33 @@
     });
   }
 
+  function deleteIndexedDb(name){
+    return new Promise((resolve,reject)=>{
+      const r=indexedDB.deleteDatabase(name);
+      r.onsuccess=()=>resolve(true);
+      r.onerror=()=>reject(r.error||new Error('No se pudo borrar '+name));
+      r.onblocked=()=>reject(new Error('El borrado de '+name+' quedó bloqueado por otra pestaña abierta. Cierra otras pestañas del ERP y vuelve a intentar.'));
+    });
+  }
+
+  async function performPendingHardReset(){
+    const key='hw2026_pending_hard_reset';
+    let pending=null;
+    try{ pending=JSON.parse(localStorage.getItem(key)||'null'); }catch(_){ pending=null; }
+    if(!pending) return null;
+    // En esta recarga todavía NO se han abierto las bases de Halloween/Folios,
+    // así que podemos eliminarlas de raíz sin competir con conexiones vivas.
+    await deleteIndexedDb(DB_NAME);
+    await deleteIndexedDb('folios_HW2026');
+    try{ localStorage.removeItem('hw2026_writer_lock'); }catch(_){}
+    try{ sessionStorage.removeItem('hw2026_tab_id'); }catch(_){}
+    try{ localStorage.removeItem(key); }catch(_){}
+    return pending;
+  }
+
   async function initUI(){
     try{
+      const resetDone=await performPendingHardReset();
       injectStyles(); injectUI();
       await Core.init();
       await Folios.init({prefijo:config.prefijo,niveles:LEVELS});
@@ -779,6 +804,9 @@
       UI.initialized=true;
       renderWriterStatus(lock,rec.length);
       updateHalloweenVisibility();
+      if(resetDone){
+        setTimeout(()=>alert(`Temporada de PRUEBA borrada por completo.\nJacks eliminados: ${Number(resetDone.jacks||0)}.\n\nLa base Halloween y la base de códigos Jack fueron creadas de nuevo desde cero.`),120);
+      }
       await syncTodaySales();
       document.getElementById('canalSelect')?.addEventListener('change',updateHalloweenVisibility);
       document.addEventListener('rv:session-changed',updateHalloweenVisibility);
@@ -1073,13 +1101,13 @@
     if(!st||!UI.initialized)return;
     const mode=await Core.getOperationalMode();
     if(mode==='produccion'){
-      st.innerHTML='Modo: <b class="hw-ok">🔒 PRODUCCIÓN 2026</b> · borrar pruebas bloqueado';
+      st.innerHTML='Modo: <b class="hw-ok">🔒 PRODUCCIÓN 2026</b> · borrar pruebas requiere desbloqueo deliberado';
       if(btn)btn.textContent='Volver a modo pruebas';
-      if(reset){reset.disabled=true;reset.style.opacity='.45';}
+      if(reset){reset.disabled=false;reset.style.opacity='.65';reset.textContent='🔒 Borrar temporada de prueba';}
     }else{
       st.innerHTML='Modo: <b>🧪 PRUEBAS</b> · puedes limpiar y volver a empezar';
       if(btn)btn.textContent='🔒 Activar PRODUCCIÓN 2026';
-      if(reset){reset.disabled=false;reset.style.opacity='1';}
+      if(reset){reset.disabled=false;reset.style.opacity='1';reset.textContent='Borrar temporada de prueba';}
     }
   }
   async function toggleOperationalMode(){
@@ -1180,15 +1208,29 @@
   }
 
   async function resetTestsUI(){
-    const first=confirm('Esto borrará TODOS los Jacks, acumulados, cartas, inventario y eventos de Halloween 2026 en este dispositivo. No toca las ventas normales del ERP. ¿Continuar?');
-    if(!first)return;
-    const typed=prompt('Escribe BORRAR PRUEBAS para confirmar:','');
-    if(typed!=='BORRAR PRUEBAS'){ showMsg('Cancelado'); return; }
-    try{ const out=await Core.resetSeasonForTests(); alert(`Datos Halloween de prueba borrados y verificados.
-Jacks eliminados: ${out.foliosBorrados||0}.
+    try{
+      const mode=await Core.getOperationalMode();
+      if(mode==='produccion'){
+        const unlock=prompt('Estás en PRODUCCIÓN 2026. No voy a ignorar el toque, pero para permitir un borrado debes desbloquear primero.\n\nEscribe VOLVER A PRUEBAS:','');
+        if(String(unlock||'').trim().toUpperCase()!=='VOLVER A PRUEBAS'){ showMsg('Borrado cancelado · sigues en PRODUCCIÓN'); return; }
+        await Core.setOperationalMode('pruebas');
+        await refreshOperationalMode();
+      }
 
-La página se recargará para iniciar limpia.`); location.reload(); }
-    catch(e){ alert('No se pudo borrar: '+e.message); }
+      let jacks=0;
+      try{ jacks=(await Folios.exportar()).folios?.length||0; }catch(_){}
+      const first=confirm(`Esto borrará la temporada de PRUEBA de este dispositivo.\n\nJacks actuales: ${jacks}\nTambién se borrarán acumulados, cartas, inventario y eventos Halloween.\nNO toca las ventas normales del ERP.\n\n¿Continuar?`);
+      if(!first)return;
+      const typed=prompt('Última protección. Escribe exactamente BORRAR PRUEBAS:','');
+      if(String(typed||'').trim().toUpperCase()!=='BORRAR PRUEBAS'){ showMsg('Cancelado'); return; }
+
+      // No intentamos vaciar bases que están abiertas en esta misma página.
+      // Marcamos el borrado y recargamos; al arrancar, antes de Folios.init/Core.init,
+      // se eliminan ambas bases completas. Es más fiable en Chrome/Android.
+      localStorage.setItem('hw2026_pending_hard_reset',JSON.stringify({jacks,requestedAt:new Date().toISOString(),version:APP_VERSION}));
+      try{ localStorage.removeItem('hw2026_writer_lock'); }catch(_){}
+      location.reload();
+    }catch(e){ alert('No se pudo preparar el borrado: '+e.message); }
   }
 
   function niceDate(v){ if(!v)return 'nunca'; try{return new Date(v).toLocaleString();}catch(_){return String(v);} }
