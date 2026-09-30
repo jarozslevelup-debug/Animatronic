@@ -8,7 +8,7 @@
 (function(root){
   'use strict';
 
-  const APP_VERSION = '0.4.3';
+  const APP_VERSION = '0.4.4';
   const DB_NAME = 'halloween_2026';
   const DB_VERSION = 1;
   const STORES = Object.freeze({
@@ -623,7 +623,7 @@
   root.Halloween2026=Core;
 
   /* =========================== UI =========================== */
-  const UI={ currentSale:null, currentJack:null, selectedCards:[], drawContext:null, initialized:false, noJackConfirmUntil:0, noJackTimer:null, scanner:null };
+  const UI={ currentSale:null, currentJack:null, selectedCards:[], drawContext:null, albumContext:null, initialized:false, noJackConfirmUntil:0, noJackTimer:null, scanner:null };
 
   function injectStyles(){
     const s=document.createElement('style'); s.textContent=`
@@ -635,7 +635,10 @@
       .hw-cardpick{background:var(--surface-2);color:var(--text);border:1px solid var(--border);padding:9px 7px;font-size:12px;position:relative}
       .hw-cardpick.sel{outline:2px solid var(--accent)}.hw-cardpick small{display:block;color:var(--text-muted);font-weight:500}
       .hw-count{position:absolute;top:3px;right:4px;background:var(--accent);color:var(--accent-ink);border-radius:10px;padding:1px 6px;font-size:10px}
-      .hw-overlay{z-index:220}.hw-wide{max-width:440px}#hwQrOverlay{z-index:10000!important;background:rgba(0,0,0,.88)!important}.hw-line{display:flex;gap:8px;align-items:center}.hw-line>*{flex:1}
+      .hw-overlay{z-index:220}.hw-wide{max-width:440px}#hwQrOverlay{z-index:10000!important;background:rgba(0,0,0,.88)!important}#hwAlbumOverlay{z-index:600!important}.hw-line{display:flex;gap:8px;align-items:center}.hw-line>*{flex:1}
+      .hw-checkgrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px;max-height:58vh;overflow:auto;margin-top:10px}
+      .hw-checkpick{display:flex;align-items:center;gap:8px;text-align:left;background:var(--surface-2);color:var(--text);border:1px solid var(--border);padding:9px;border-radius:10px;font-size:12px;min-height:46px}
+      .hw-checkpick.sel{outline:2px solid var(--accent);background:var(--surface)}.hw-checkmark{flex:0 0 22px;width:22px;height:22px;border-radius:6px;border:1px solid var(--border);display:grid;place-items:center;font-weight:900}.hw-checkpick.sel .hw-checkmark{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
       .hw-danger{color:var(--danger)}.hw-ok{color:var(--ok)}.hw-section{margin-top:14px;padding-top:12px;border-top:1px solid var(--border)}
       .hw-pill{display:inline-block;padding:3px 8px;border-radius:20px;background:var(--surface-2);font-size:11px;margin:2px}
       .hw-scan-video{width:100%;aspect-ratio:3/4;max-height:60vh;object-fit:cover;background:#000;border-radius:12px;border:1px solid var(--border)}
@@ -677,6 +680,19 @@
     document.getElementById('hwDrawClose').onclick=()=>{ draw.style.display='none'; };
     document.getElementById('hwDrawConfirm').onclick=confirmDraw;
     document.getElementById('hwDrawQuick').onclick=confirmQuickDraw;
+
+    const album=document.createElement('div'); album.id='hwAlbumOverlay'; album.className='overlay hw-overlay'; album.style.display='none'; album.innerHTML=`
+      <div class="overlay-card hw-wide" style="max-height:90vh;overflow:auto;"><div class="overlay-header"><strong>🗂️ Cartas que dice tener ahora</strong><button class="close-x" id="hwAlbumClose">✕</button></div>
+      <div class="hw-muted">Marca solamente las cartas que el cliente muestra o declara tener en este momento. Esto no cambia lo que el puesto ya registró como entregado.</div>
+      <div id="hwAlbumGrid" class="hw-checkgrid"></div>
+      <div class="total-line"><span>Marcadas</span><strong id="hwAlbumCount">0/17</strong></div>
+      <button class="btn-primary" id="hwAlbumSave">Guardar estado declarado</button>
+      <button class="btn-secondary btn-block" id="hwAlbumCancel" style="margin-top:8px;">Cancelar</button>
+      </div>`; document.body.appendChild(album);
+    const closeAlbum=()=>{ album.style.display='none'; UI.albumContext=null; };
+    document.getElementById('hwAlbumClose').onclick=closeAlbum;
+    document.getElementById('hwAlbumCancel').onclick=closeAlbum;
+    document.getElementById('hwAlbumSave').onclick=saveAlbumState;
 
     const dash=document.createElement('div'); dash.id='hwDashboardOverlay'; dash.className='overlay hw-overlay'; dash.style.display='none'; dash.innerHTML=`
       <div class="overlay-card hw-wide" style="max-height:90vh;overflow:auto;"><div class="overlay-header"><strong>🎃 Halloween 2026</strong><button class="close-x" id="hwDashClose">✕</button></div>
@@ -754,6 +770,7 @@
       const d=document.getElementById('hwDashboardOverlay'); if(d)d.style.display='none';
       const s=document.getElementById('hwSaleOverlay'); if(s)s.style.display='none';
       const dr=document.getElementById('hwDrawOverlay'); if(dr)dr.style.display='none';
+      const al=document.getElementById('hwAlbumOverlay'); if(al)al.style.display='none'; UI.albumContext=null;
     }
   }
 
@@ -851,6 +868,7 @@
     UI.currentJack=null;
     const code=document.getElementById('hwLookupCode'); if(code)code.value='';
     const panel=document.getElementById('hwJackPanel'); if(panel)panel.innerHTML='';
+    const al=document.getElementById('hwAlbumOverlay'); if(al)al.style.display='none'; UI.albumContext=null;
     stopQrScanner();
   }
 
@@ -1151,10 +1169,42 @@
   }
 
   async function openAlbumState(snapshot){
-    const inv=await Core.listInventory(); const owned=new Set(snapshot.profile.reportedOwned||[]); const labels=inv.map(c=>`${owned.has(c.id)?'[x]':'[ ]'} ${c.id} ${c.nombre}`).join('\n');
-    const txt=prompt('Escribe los IDs que el cliente muestra que tiene, separados por coma.\n\n'+labels, [...owned].join(','));
-    if(txt===null)return; const ids=[...new Set(txt.split(',').map(x=>x.trim().toUpperCase()).filter(Boolean))].filter(id=>inv.some(c=>c.id===id));
-    await Core.saveReportedOwned(snapshot.codigo,ids); showMsg(`Estado declarado: ${ids.length}/17`); await lookupJack();
+    const inv=await Core.listInventory();
+    UI.albumContext={codigo:snapshot.codigo,selected:new Set(snapshot.profile.reportedOwned||[]),inventory:inv};
+    const grid=document.getElementById('hwAlbumGrid'); grid.innerHTML='';
+    for(const c of inv){
+      const b=document.createElement('button'); b.type='button'; b.className='hw-checkpick'; b.dataset.id=c.id;
+      b.innerHTML=`<span class="hw-checkmark"></span><span><b>${escapeHtml(c.nombre)}</b><small style="display:block;color:var(--text-muted);">${escapeHtml(c.numero||c.id)}</small></span>`;
+      b.addEventListener('click',()=>toggleAlbumCard(c.id,b));
+      updateAlbumCardVisual(c.id,b);
+      grid.appendChild(b);
+    }
+    updateAlbumCount();
+    document.getElementById('hwAlbumOverlay').style.display='flex';
+  }
+
+  function updateAlbumCardVisual(id,btn){
+    const sel=!!UI.albumContext?.selected?.has(id);
+    btn.classList.toggle('sel',sel);
+    const mark=btn.querySelector('.hw-checkmark'); if(mark)mark.textContent=sel?'✓':'';
+  }
+  function updateAlbumCount(){
+    const n=UI.albumContext?.selected?.size||0; const total=UI.albumContext?.inventory?.length||17;
+    const el=document.getElementById('hwAlbumCount'); if(el)el.textContent=`${n}/${total}`;
+  }
+  function toggleAlbumCard(id,btn){
+    const ctx=UI.albumContext; if(!ctx)return;
+    if(ctx.selected.has(id))ctx.selected.delete(id); else ctx.selected.add(id);
+    updateAlbumCardVisual(id,btn); updateAlbumCount();
+  }
+  async function saveAlbumState(){
+    const ctx=UI.albumContext; if(!ctx)return;
+    const ids=[...ctx.selected];
+    try{
+      await Core.saveReportedOwned(ctx.codigo,ids);
+      document.getElementById('hwAlbumOverlay').style.display='none'; UI.albumContext=null;
+      showMsg(`Estado declarado: ${ids.length}/17`); await lookupJack();
+    }catch(e){alert(e.message);}
   }
 
   async function refreshOperationalMode(){
