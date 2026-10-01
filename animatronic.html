@@ -769,56 +769,125 @@ function ensureAdvancedOverlay(){
   d.innerHTML=`<div class="adv-wrap"><div class="adv-head"><div class="adv-title">☠ CONFIGURACIÓN V2</div><button class="adv-btn" type="button" onclick="closeAdvancedConfig()">Cerrar</button></div><div id="adv-config-body"></div></div>`;
   document.body.appendChild(d);
 }
-function openAdvancedConfig(){ ensureAdvancedOverlay(); renderAdvancedConfig(); document.getElementById('adv-config-overlay').classList.add('open'); }
-function closeAdvancedConfig(){ document.getElementById('adv-config-overlay')?.classList.remove('open'); }
+let ADV_DRAFT = null;
+let ADV_POOL_SELECTED = 'situ_venta';
+let ADV_JACK_SELECTED = 'N1';
+
+function renderPoolEditor(){
+  const host=document.getElementById('adv-pool-editor'); if(!host||!ADV_DRAFT)return;
+  const k=ADV_POOL_SELECTED in ADV_DRAFT.pools?ADV_POOL_SELECTED:Object.keys(ADV_DRAFT.pools)[0];
+  ADV_POOL_SELECTED=k;
+  const p=ADV_DRAFT.pools[k];
+  host.innerHTML=`
+    <div class="adv-row"><div><div class="adv-pool-name">${POOL_LABELS[k]||k}</div><div class="adv-muted">${escAttr(AUDIO_POOLS_CONFIG[k]?.folder||'')}</div></div><label class="adv-check"><input id="adv-pool-enabled" type="checkbox" ${p.enabled?'checked':''}>Usar carpeta</label></div>
+    <div class="adv-grid2">
+      <div class="adv-row"><label>Audios numerados / tope</label><input id="adv-pool-tope" type="number" min="0" step="1" value="${p.tope}"></div>
+      <div class="adv-row"><label>Prioridad futura</label><input id="adv-pool-priority" type="number" min="0" max="100" step="1" value="${p.priority}"></div>
+    </div>
+    <div class="adv-row"><label>Volumen de carpeta</label><div style="display:flex;align-items:center;gap:6px;min-width:180px"><input id="adv-pool-volume" type="range" min="0" max="1" step="0.05" value="${p.volume}" style="flex:1" oninput="document.getElementById('adv-pool-volume-label').textContent=Math.round(this.value*100)+'%'"><span id="adv-pool-volume-label" class="adv-muted">${Math.round(p.volume*100)}%</span></div></div>
+    <div class="adv-muted">Emociones permitidas para esta situación</div>
+    <div class="adv-emotions">${renderEmotionChecks(p.emotions,'pool-current')}</div>
+    <div class="adv-actions"><button class="adv-btn" type="button" onclick="testPoolFromAdvanced()">▶ Probar situación</button></div>`;
+}
+
+function capturePoolEditor(){
+  if(!ADV_DRAFT||!ADV_DRAFT.pools[ADV_POOL_SELECTED]||!document.getElementById('adv-pool-enabled'))return;
+  const p=ADV_DRAFT.pools[ADV_POOL_SELECTED];
+  p.enabled=!!document.getElementById('adv-pool-enabled').checked;
+  p.tope=Number(document.getElementById('adv-pool-tope')?.value||0);
+  p.priority=Number(document.getElementById('adv-pool-priority')?.value||30);
+  p.volume=Number(document.getElementById('adv-pool-volume')?.value??1);
+  p.emotions=selectedEmotionChecks('pool-current');
+}
+
+function changeAdvancedPool(name){
+  capturePoolEditor();
+  if(ADV_DRAFT?.pools?.[name]) ADV_POOL_SELECTED=name;
+  renderPoolEditor();
+}
+
+function renderJackEditor(){
+  const host=document.getElementById('adv-jack-editor'); if(!host||!ADV_DRAFT)return;
+  const level=ADV_JACK_SELECTED in ADV_DRAFT.jackEffects?ADV_JACK_SELECTED:Object.keys(ADV_DRAFT.jackEffects)[0];
+  ADV_JACK_SELECTED=level;
+  const j=ADV_DRAFT.jackEffects[level];
+  const poolOptions=Object.keys(AUDIO_POOLS_CONFIG).map(k=>`<option value="${k}" ${j.pool===k?'selected':''}>${POOL_LABELS[k]||k}</option>`).join('');
+  host.innerHTML=`
+    <div class="adv-row"><div class="adv-pool-name">${JACK_LEVEL_LABELS[level]||level}</div><label class="adv-check"><input id="adv-jack-enabled" type="checkbox" ${j.enabled?'checked':''}>Activo</label></div>
+    <div class="adv-grid2"><div class="adv-row"><label>Audio / carpeta</label><select id="adv-jack-pool">${poolOptions}</select></div><div class="adv-row"><label>Prioridad</label><input id="adv-jack-priority" type="number" min="0" max="100" value="${j.priority}"></div></div>
+    <div class="adv-muted">Emociones posibles al llegar a este nivel</div>
+    <div class="adv-emotions">${renderEmotionChecks(j.emotions,'jack-current')}</div>
+    <div class="adv-actions"><button class="adv-btn" type="button" onclick="testJackFromAdvanced()">▶ Probar ${level}</button></div>`;
+}
+
+function captureJackEditor(){
+  if(!ADV_DRAFT||!ADV_DRAFT.jackEffects[ADV_JACK_SELECTED]||!document.getElementById('adv-jack-enabled'))return;
+  const j=ADV_DRAFT.jackEffects[ADV_JACK_SELECTED];
+  j.enabled=!!document.getElementById('adv-jack-enabled').checked;
+  j.pool=document.getElementById('adv-jack-pool')?.value||'fx_terror';
+  j.priority=Number(document.getElementById('adv-jack-priority')?.value||60);
+  j.emotions=selectedEmotionChecks('jack-current');
+}
+
+function changeAdvancedJack(level){
+  captureJackEditor();
+  if(ADV_DRAFT?.jackEffects?.[level]) ADV_JACK_SELECTED=level;
+  renderJackEditor();
+}
 
 function renderAdvancedConfig(){
   ensureAdvancedOverlay();
-  const c=RUNTIME_CONFIG;
-  const poolOptions=Object.keys(AUDIO_POOLS_CONFIG).map(k=>`<option value="${k}">${POOL_LABELS[k]||k}</option>`).join('');
-  const pools=Object.entries(c.pools).map(([k,p])=>`<div class="adv-pool" data-pool-card="${k}">
-    <div class="adv-row"><div><div class="adv-pool-name">${POOL_LABELS[k]||k}</div><div class="adv-muted">${escAttr(AUDIO_POOLS_CONFIG[k]?.folder||'')}</div></div><label class="adv-check"><input id="adv-pool-enabled-${k}" type="checkbox" ${p.enabled?'checked':''}>Usar carpeta</label></div>
-    <div class="adv-grid2">
-      <div class="adv-row"><label>Audios numerados / tope</label><input id="adv-pool-tope-${k}" type="number" min="0" step="1" value="${p.tope}"></div>
-      <div class="adv-row"><label>Prioridad futura</label><input id="adv-pool-priority-${k}" type="number" min="0" max="100" step="1" value="${p.priority}"></div>
-    </div>
-    <div class="adv-row"><label>Volumen de carpeta</label><div style="display:flex;align-items:center;gap:6px;min-width:180px"><input id="adv-pool-volume-${k}" type="range" min="0" max="1" step="0.05" value="${p.volume}" style="flex:1" oninput="document.getElementById('adv-pool-volume-label-${k}').textContent=Math.round(this.value*100)+'%'"><span id="adv-pool-volume-label-${k}" class="adv-muted">${Math.round(p.volume*100)}%</span></div></div>
-    <div class="adv-muted">Emociones permitidas para esta carpeta</div><div class="adv-emotions">${renderEmotionChecks(p.emotions,'pool-'+k)}</div>
-    <div class="adv-actions"><button class="adv-btn" type="button" onclick="testPoolFromAdvanced('${k}')">▶ Probar carpeta</button></div>
-  </div>`).join('');
-
-  const jack=Object.entries(c.jackEffects).map(([level,j])=>`<div class="adv-pool adv-level">
-    <div class="adv-row"><div class="adv-pool-name">${JACK_LEVEL_LABELS[level]||level}</div><label class="adv-check"><input id="adv-jack-enabled-${level}" type="checkbox" ${j.enabled?'checked':''}>Activo</label></div>
-    <div class="adv-grid2"><div class="adv-row"><label>Audio / carpeta</label><select id="adv-jack-pool-${level}">${poolOptions}</select></div><div class="adv-row"><label>Prioridad</label><input id="adv-jack-priority-${level}" type="number" min="0" max="100" value="${j.priority}"></div></div>
-    <div class="adv-muted">Emociones posibles al llegar a este nivel</div><div class="adv-emotions">${renderEmotionChecks(j.emotions,'jack-'+level)}</div>
-    <div class="adv-actions"><button class="adv-btn" type="button" onclick="testJackFromAdvanced('${level}')">▶ Probar ${level}</button></div>
-  </div>`).join('');
+  if(!ADV_DRAFT) ADV_DRAFT=currentConfigSnapshot();
+  const c=ADV_DRAFT;
+  const poolSelector=Object.keys(c.pools).map(k=>`<option value="${k}" ${k===ADV_POOL_SELECTED?'selected':''}>${POOL_LABELS[k]||k}</option>`).join('');
+  const jackSelector=Object.keys(c.jackEffects).map(k=>`<option value="${k}" ${k===ADV_JACK_SELECTED?'selected':''}>${JACK_LEVEL_LABELS[k]||k}</option>`).join('');
 
   document.getElementById('adv-config-body').innerHTML=`
-    <div class="adv-card"><h3>Modo de frases y horario</h3>
-      <div class="adv-row"><label>Modo</label><select id="adv-mode-force"><option value="">Automático por horario</option><option value="familiar">Forzar familiar</option><option value="troll">Forzar troll</option></select></div>
+    <details class="adv-card" open><summary><b>Modo de frases y horario</b></summary>
+      <div style="margin-top:10px"><div class="adv-row"><label>Modo</label><select id="adv-mode-force"><option value="">Automático por horario</option><option value="familiar">Forzar familiar</option><option value="troll">Forzar troll</option></select></div>
       <div class="adv-grid2"><div class="adv-row"><label>Troll desde</label><input id="adv-troll-start" type="time" value="${escAttr(c.mode.trollStart)}"></div><div class="adv-row"><label>Troll hasta</label><input id="adv-troll-end" type="time" value="${escAttr(c.mode.trollEnd)}"></div></div>
-      <div class="adv-muted">Si el rango cruza medianoche, por ejemplo 21:00 → 06:00, se interpreta correctamente.</div>
-    </div>
-    <div class="adv-card"><h3>Comportamiento</h3>
-      <label class="adv-check"><input id="adv-auto-greet" type="checkbox" ${c.options.autoGreet?'checked':''}>Saludo automático</label>
+      <div class="adv-muted">Si cruza medianoche, por ejemplo 21:00 → 06:00, se interpreta correctamente.</div></div>
+    </details>
+    <details class="adv-card"><summary><b>Comportamiento general</b></summary>
+      <div style="margin-top:10px"><label class="adv-check"><input id="adv-auto-greet" type="checkbox" ${c.options.autoGreet?'checked':''}>Saludo automático</label>
       <label class="adv-check"><input id="adv-auto-farewell" type="checkbox" ${c.options.autoFarewell?'checked':''}>Despedida automática</label>
       <label class="adv-check"><input id="adv-promos" type="checkbox" ${c.options.promosEnabled?'checked':''}>Promociones</label>
-      <div class="adv-row"><label>Volumen maestro del animatrónico</label><div style="display:flex;align-items:center;gap:6px;min-width:180px"><input id="adv-master-volume" type="range" min="0" max="1" step="0.05" value="${c.audio.masterVolume}" style="flex:1" oninput="document.getElementById('adv-master-volume-label').textContent=Math.round(this.value*100)+'%'"><span id="adv-master-volume-label" class="adv-muted">${Math.round(c.audio.masterVolume*100)}%</span></div></div>
-    </div>
-    <div class="adv-card"><h3>Carpetas de audio</h3><div class="adv-muted">Palomea las emociones que esta carpeta puede usar. Cambiar esto ya no requiere editar el HTML.</div>${pools}</div>
-    <div class="adv-card"><h3>Efectos Jack · preparados para comunicación</h3><div class="adv-muted">Todavía no hay Firebase en esta versión. Aquí defines qué podrá ejecutar cada nivel cuando conectemos el ERP.</div>${jack}</div>
-    <div class="adv-card"><h3>Respaldo de configuración</h3>
-      <div class="adv-actions"><button class="adv-btn primary" type="button" onclick="saveAdvancedConfig()">Guardar y aplicar</button><button class="adv-btn" type="button" onclick="exportAnimConfig()">💾 Exportar JSON</button><button class="adv-btn" type="button" onclick="document.getElementById('adv-config-import').click()">↩ Importar JSON</button><button class="adv-btn warn" type="button" onclick="resetAnimConfigDefaults()">Restaurar valores iniciales</button></div>
+      <div class="adv-row"><label>Volumen maestro</label><div style="display:flex;align-items:center;gap:6px;min-width:180px"><input id="adv-master-volume" type="range" min="0" max="1" step="0.05" value="${c.audio.masterVolume}" style="flex:1" oninput="document.getElementById('adv-master-volume-label').textContent=Math.round(this.value*100)+'%'"><span id="adv-master-volume-label" class="adv-muted">${Math.round(c.audio.masterVolume*100)}%</span></div></div></div>
+    </details>
+    <details class="adv-card" open><summary><b>Situaciones / carpetas de audio</b></summary>
+      <div style="margin-top:10px"><div class="adv-muted">Una sola plantilla: elige la situación y cambian sus valores y palomitas.</div>
+      <div class="adv-row"><label>Situación</label><select id="adv-pool-select" onchange="changeAdvancedPool(this.value)">${poolSelector}</select></div>
+      <div id="adv-pool-editor" class="adv-pool"></div></div>
+    </details>
+    <details class="adv-card"><summary><b>Efectos Jack</b></summary>
+      <div style="margin-top:10px"><div class="adv-muted">La misma plantilla sirve para N1, N2, N3 y N4.</div>
+      <div class="adv-row"><label>Nivel</label><select id="adv-jack-select" onchange="changeAdvancedJack(this.value)">${jackSelector}</select></div>
+      <div id="adv-jack-editor" class="adv-pool adv-level"></div></div>
+    </details>
+    <details class="adv-card"><summary><b>Respaldo de configuración</b></summary>
+      <div style="margin-top:10px" class="adv-actions"><button class="adv-btn primary" type="button" onclick="saveAdvancedConfig()">Guardar y aplicar</button><button class="adv-btn" type="button" onclick="exportAnimConfig()">💾 Exportar JSON</button><button class="adv-btn" type="button" onclick="document.getElementById('adv-config-import').click()">↩ Importar JSON</button><button class="adv-btn warn" type="button" onclick="resetAnimConfigDefaults()">Restaurar valores iniciales</button></div>
       <input id="adv-config-import" type="file" accept="application/json,.json" style="display:none" onchange="importAnimConfigFile(event)"><div id="adv-config-status" class="adv-status"></div>
-    </div>`;
+    </details>`;
   document.getElementById('adv-mode-force').value=c.mode.forced||'';
-  for(const [level,j] of Object.entries(c.jackEffects)){ const el=document.getElementById('adv-jack-pool-'+level); if(el)el.value=j.pool; }
+  renderPoolEditor();
+  renderJackEditor();
 }
+
+function openAdvancedConfig(){
+  ensureAdvancedOverlay();
+  ADV_DRAFT=currentConfigSnapshot();
+  if(!ADV_DRAFT.pools[ADV_POOL_SELECTED]) ADV_POOL_SELECTED=Object.keys(ADV_DRAFT.pools)[0];
+  if(!ADV_DRAFT.jackEffects[ADV_JACK_SELECTED]) ADV_JACK_SELECTED=Object.keys(ADV_DRAFT.jackEffects)[0];
+  renderAdvancedConfig();
+  document.getElementById('adv-config-overlay').classList.add('open');
+}
+function closeAdvancedConfig(){ ADV_DRAFT=null; document.getElementById('adv-config-overlay')?.classList.remove('open'); }
 
 function advStatus(msg,ok=true){ const el=document.getElementById('adv-config-status'); if(el){ el.textContent=msg; el.style.color=ok?'var(--green)':'#ff8855'; } }
 function readAdvancedConfig(){
-  const c=currentConfigSnapshot();
+  if(!ADV_DRAFT) ADV_DRAFT=currentConfigSnapshot();
+  capturePoolEditor(); captureJackEditor();
+  const c=ADV_DRAFT;
   c.mode.forced=safeMode(document.getElementById('adv-mode-force')?.value||'');
   c.mode.trollStart=document.getElementById('adv-troll-start')?.value||c.mode.trollStart;
   c.mode.trollEnd=document.getElementById('adv-troll-end')?.value||c.mode.trollEnd;
@@ -826,24 +895,18 @@ function readAdvancedConfig(){
   c.options.autoFarewell=!!document.getElementById('adv-auto-farewell')?.checked;
   c.options.promosEnabled=!!document.getElementById('adv-promos')?.checked;
   c.audio.masterVolume=Number(document.getElementById('adv-master-volume')?.value ?? c.audio.masterVolume);
-  for(const k of Object.keys(c.pools)){
-    c.pools[k].enabled=!!document.getElementById('adv-pool-enabled-'+k)?.checked;
-    c.pools[k].tope=Number(document.getElementById('adv-pool-tope-'+k)?.value||0);
-    c.pools[k].priority=Number(document.getElementById('adv-pool-priority-'+k)?.value||30);
-    c.pools[k].volume=Number(document.getElementById('adv-pool-volume-'+k)?.value??1);
-    c.pools[k].emotions=selectedEmotionChecks('pool-'+k);
-  }
-  for(const level of Object.keys(c.jackEffects)){
-    c.jackEffects[level].enabled=!!document.getElementById('adv-jack-enabled-'+level)?.checked;
-    c.jackEffects[level].pool=document.getElementById('adv-jack-pool-'+level)?.value||'fx_terror';
-    c.jackEffects[level].priority=Number(document.getElementById('adv-jack-priority-'+level)?.value||60);
-    c.jackEffects[level].emotions=selectedEmotionChecks('jack-'+level);
-  }
-  return normalizeRuntimeConfig(c);
+  ADV_DRAFT=normalizeRuntimeConfig(c);
+  return cloneJson(ADV_DRAFT);
 }
-function saveAdvancedConfig(){ RUNTIME_CONFIG=readAdvancedConfig(); applyRuntimeConfig(true); advStatus('Configuración guardada y aplicada.'); renderAdvancedConfig(); }
-async function testPoolFromAdvanced(name){ try{ const temp=readAdvancedConfig(); const old=RUNTIME_CONFIG; RUNTIME_CONFIG=temp; applyRuntimeConfig(false); const ok=await tryPlayFromPool(name); if(!ok) advStatus(`No se pudo reproducir ${POOL_LABELS[name]||name}; revisa tope/archivos.`,false); else advStatus(`Prueba enviada: ${POOL_LABELS[name]||name}`); RUNTIME_CONFIG=old; applyRuntimeConfig(false); }catch(e){advStatus(e.message,false);} }
-async function testJackFromAdvanced(level){ try{ const temp=readAdvancedConfig(); const old=RUNTIME_CONFIG; RUNTIME_CONFIG=temp; applyRuntimeConfig(false); const r=await triggerJackLevel(level); advStatus(r.ok?`Prueba ${level} ejecutada`:`${level}: ${r.reason||'no ejecutado'}`,r.ok); RUNTIME_CONFIG=old; applyRuntimeConfig(false); }catch(e){advStatus(e.message,false);} }
+function saveAdvancedConfig(){ RUNTIME_CONFIG=readAdvancedConfig(); applyRuntimeConfig(true); ADV_DRAFT=currentConfigSnapshot(); advStatus('Configuración guardada y aplicada.'); renderAdvancedConfig(); }
+async function testPoolFromAdvanced(){
+  try{ const temp=readAdvancedConfig(); const old=RUNTIME_CONFIG; RUNTIME_CONFIG=temp; applyRuntimeConfig(false); const name=ADV_POOL_SELECTED; const ok=await tryPlayFromPool(name); RUNTIME_CONFIG=old; applyRuntimeConfig(false); if(!ok) advStatus(`No se pudo reproducir ${POOL_LABELS[name]||name}; revisa tope/archivos.`,false); else advStatus(`Prueba enviada: ${POOL_LABELS[name]||name}`); }
+  catch(e){advStatus(e.message,false);}
+}
+async function testJackFromAdvanced(){
+  try{ const temp=readAdvancedConfig(); const old=RUNTIME_CONFIG; RUNTIME_CONFIG=temp; applyRuntimeConfig(false); const level=ADV_JACK_SELECTED; const r=await triggerJackLevel(level); RUNTIME_CONFIG=old; applyRuntimeConfig(false); advStatus(r.ok?`Prueba ${level} ejecutada`:`${level}: ${r.reason||'no ejecutado'}`,r.ok); }
+  catch(e){advStatus(e.message,false);}
+}
 
 function exportAnimConfig(){
   try{
@@ -855,10 +918,10 @@ function exportAnimConfig(){
 }
 async function importAnimConfigFile(ev){
   const f=ev.target.files?.[0]; if(!f)return;
-  try{ const obj=JSON.parse(await f.text()); if(obj.kind&&obj.kind!==CONFIG_KIND)throw new Error('El JSON no corresponde a esta configuración.'); RUNTIME_CONFIG=normalizeRuntimeConfig(obj); applyRuntimeConfig(true); renderAdvancedConfig(); advStatus('Configuración importada y aplicada.'); }
+  try{ const obj=JSON.parse(await f.text()); if(obj.kind&&obj.kind!==CONFIG_KIND)throw new Error('El JSON no corresponde a esta configuración.'); RUNTIME_CONFIG=normalizeRuntimeConfig(obj); applyRuntimeConfig(true); ADV_DRAFT=currentConfigSnapshot(); renderAdvancedConfig(); advStatus('Configuración importada y aplicada.'); }
   catch(e){advStatus('No se pudo importar: '+e.message,false);} finally{ev.target.value='';}
 }
-function resetAnimConfigDefaults(){ if(!confirm('¿Restaurar la configuración operativa inicial? No cambia animaciones ni archivos de audio.'))return; RUNTIME_CONFIG=normalizeRuntimeConfig(DEFAULT_RUNTIME_CONFIG); applyRuntimeConfig(true); renderAdvancedConfig(); advStatus('Valores iniciales restaurados.'); }
+function resetAnimConfigDefaults(){ if(!confirm('¿Restaurar la configuración operativa inicial? No cambia animaciones ni archivos de audio.'))return; RUNTIME_CONFIG=normalizeRuntimeConfig(DEFAULT_RUNTIME_CONFIG); applyRuntimeConfig(true); ADV_DRAFT=currentConfigSnapshot(); renderAdvancedConfig(); advStatus('Valores iniciales restaurados.'); }
 
 async function triggerJackLevel(level){
   level=String(level||'').toUpperCase(); const cfg=RUNTIME_CONFIG.jackEffects[level];
