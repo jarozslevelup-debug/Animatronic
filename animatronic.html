@@ -613,6 +613,8 @@ const AUDIO_POOLS_CONFIG = {
   situ_fiado:    { folder: 'audio/situ_fiado',    tope: 0, emotions: ['evil','riendo','possessed'] },
   situ_regateo:  { folder: 'audio/situ_regateo',  tope: 0, emotions: ['suspicious','riendo','travieso'] },
   situ_venta:    { folder: 'audio/situ_venta',    tope: 0, emotions: ['curioso','evil','glitch'] },
+  situ_album:    { folder: 'audio/situ_album',    tope: 0, emotions: ['happy','curioso','siniestro','travieso'] },
+  situ_chiste:   { folder: 'audio/situ_chiste',   tope: 0, emotions: ['riendo','travieso','curioso','evil'] },
   fx_terror:     { folder: 'audio/fx_terror',     tope: 0, emotions: ['evil','glitch','possessed','estatico','membrana','furia'] },
   greet_familiar:     { folder: 'audio/greet_familiar',     tope: 0, emotions: ['happy','curioso','suspicious','travieso'] },
   greet_troll:        { folder: 'audio/greet_troll',        tope: 0, emotions: ['evil','riendo','possessed','glitch','siniestro'] },
@@ -627,6 +629,7 @@ const CONFIG_STORAGE_KEY = 'animatronic_config_v2';
 const CONFIG_KIND = 'ANIMATRONIC_CONFIG_V2';
 const POOL_LABELS = {
   situ_mascaras:'Máscaras', situ_indeciso:'Indeciso', situ_fiado:'Fiado', situ_regateo:'Regateo', situ_venta:'Venta',
+  situ_album:'Álbum', situ_chiste:'Chiste / comentario',
   fx_terror:'Efectos de terror', greet_familiar:'Saludo familiar', greet_troll:'Saludo troll',
   despedida_familiar:'Despedida familiar', despedida_troll:'Despedida troll'
 };
@@ -639,7 +642,7 @@ function safeMode(v){ return v==='familiar'||v==='troll'?v:''; }
 
 const DEFAULT_RUNTIME_CONFIG = {
   kind: CONFIG_KIND,
-  version: 2,
+  version: 3,
   mode: {
     forced: safeMode(localStorage.getItem('troll_mode_force') || ''),
     trollStart: '21:00',
@@ -648,7 +651,13 @@ const DEFAULT_RUNTIME_CONFIG = {
   options: {
     autoGreet: S.autoGreet,
     autoFarewell: S.autoFarewell,
-    promosEnabled: S.promosEnabled
+    promosEnabled: S.promosEnabled,
+    // Bienvenida conserva el umbral probado (~175 ms).
+    // Estos tres sí son configurables sin tocar HTML.
+    autoInterVisit: true,
+    interMinSec: 20,
+    interMaxSec: 35,
+    farewellDelaySec: 1.6
   },
   audio: { masterVolume: S.volume },
   pools: Object.fromEntries(Object.entries(AUDIO_POOLS_CONFIG).map(([k,v])=>[k,{
@@ -657,7 +666,9 @@ const DEFAULT_RUNTIME_CONFIG = {
     emotions: [...(v.emotions||[])],
     numberEmotions: cloneJson(v.numberEmotions||{}),
     volume: 1,
-    priority: 30
+    priority: 30,
+    // Sólo las situaciones marcadas pueden entrar solas durante una visita.
+    autoVisit: (k==='situ_album' || k==='situ_chiste')
   }])),
   jackEffects: {
     N1:{enabled:true,pool:'fx_terror',emotions:['happy','curioso'],priority:60},
@@ -674,7 +685,7 @@ function mergeRuntimeConfig(base, incoming){
   if(src.audio) Object.assign(out.audio,src.audio);
   if(src.pools) for(const [k,v] of Object.entries(src.pools)) if(out.pools[k]&&v&&typeof v==='object') Object.assign(out.pools[k],v);
   if(src.jackEffects) for(const [k,v] of Object.entries(src.jackEffects)) if(out.jackEffects[k]&&v&&typeof v==='object') Object.assign(out.jackEffects[k],v);
-  out.kind=CONFIG_KIND; out.version=2;
+  out.kind=CONFIG_KIND; out.version=3;
   return out;
 }
 
@@ -686,12 +697,18 @@ function normalizeRuntimeConfig(cfg){
   out.options.autoGreet=!!out.options.autoGreet;
   out.options.autoFarewell=!!out.options.autoFarewell;
   out.options.promosEnabled=!!out.options.promosEnabled;
+  out.options.autoInterVisit=out.options.autoInterVisit!==false;
+  out.options.interMinSec=clampNum(out.options.interMinSec,3,300,20);
+  out.options.interMaxSec=clampNum(out.options.interMaxSec,3,600,35);
+  if(out.options.interMaxSec < out.options.interMinSec) out.options.interMaxSec=out.options.interMinSec;
+  out.options.farewellDelaySec=clampNum(out.options.farewellDelaySec,0.5,20,1.6);
   out.audio.masterVolume=clampNum(out.audio.masterVolume,0,1,0.7);
   for(const [k,p] of Object.entries(out.pools)){
     p.enabled=p.enabled!==false;
     p.tope=Math.max(0,Math.floor(Number(p.tope)||0));
     p.volume=clampNum(p.volume,0,1,1);
     p.priority=Math.max(0,Math.min(100,Math.floor(Number(p.priority)||30)));
+    p.autoVisit=!!p.autoVisit;
     p.emotions=[...new Set((p.emotions||[]).filter(x=>ANIMS.includes(x)))];
     p.numberEmotions=(p.numberEmotions&&typeof p.numberEmotions==='object')?p.numberEmotions:{};
   }
@@ -736,6 +753,7 @@ function applyRuntimeConfig(persist=true){
     AUDIO_POOLS_CONFIG[k].numberEmotions=cloneJson(cfg.numberEmotions||{});
     AUDIO_POOLS_CONFIG[k].volume=cfg.volume;
     AUDIO_POOLS_CONFIG[k].priority=cfg.priority;
+    AUDIO_POOLS_CONFIG[k].autoVisit=cfg.autoVisit;
   }
   if(persist) saveRuntimeConfig();
   const vol=document.querySelector('.vol-slider'); if(vol)vol.value=String(S.volume);
@@ -780,6 +798,7 @@ function renderPoolEditor(){
   const p=ADV_DRAFT.pools[k];
   host.innerHTML=`
     <div class="adv-row"><div><div class="adv-pool-name">${POOL_LABELS[k]||k}</div><div class="adv-muted">${escAttr(AUDIO_POOLS_CONFIG[k]?.folder||'')}</div></div><label class="adv-check"><input id="adv-pool-enabled" type="checkbox" ${p.enabled?'checked':''}>Usar carpeta</label></div>
+    <label class="adv-check"><input id="adv-pool-auto-visit" type="checkbox" ${p.autoVisit?'checked':''}>Puede salir automáticamente a media visita</label>
     <div class="adv-grid2">
       <div class="adv-row"><label>Audios numerados / tope</label><input id="adv-pool-tope" type="number" min="0" step="1" value="${p.tope}"></div>
       <div class="adv-row"><label>Prioridad futura</label><input id="adv-pool-priority" type="number" min="0" max="100" step="1" value="${p.priority}"></div>
@@ -794,6 +813,7 @@ function capturePoolEditor(){
   if(!ADV_DRAFT||!ADV_DRAFT.pools[ADV_POOL_SELECTED]||!document.getElementById('adv-pool-enabled'))return;
   const p=ADV_DRAFT.pools[ADV_POOL_SELECTED];
   p.enabled=!!document.getElementById('adv-pool-enabled').checked;
+  p.autoVisit=!!document.getElementById('adv-pool-auto-visit')?.checked;
   p.tope=Number(document.getElementById('adv-pool-tope')?.value||0);
   p.priority=Number(document.getElementById('adv-pool-priority')?.value||30);
   p.volume=Number(document.getElementById('adv-pool-volume')?.value??1);
@@ -851,7 +871,14 @@ function renderAdvancedConfig(){
     <details class="adv-card"><summary><b>Comportamiento general</b></summary>
       <div style="margin-top:10px"><label class="adv-check"><input id="adv-auto-greet" type="checkbox" ${c.options.autoGreet?'checked':''}>Saludo automático</label>
       <label class="adv-check"><input id="adv-auto-farewell" type="checkbox" ${c.options.autoFarewell?'checked':''}>Despedida automática</label>
+      <label class="adv-check"><input id="adv-auto-inter" type="checkbox" ${c.options.autoInterVisit?'checked':''}>Intervenciones automáticas durante la visita</label>
       <label class="adv-check"><input id="adv-promos" type="checkbox" ${c.options.promosEnabled?'checked':''}>Promociones</label>
+      <div class="adv-grid2">
+        <div class="adv-row"><label>Inter mínimo (s)</label><input id="adv-inter-min" type="number" min="3" max="300" step="1" value="${c.options.interMinSec}"></div>
+        <div class="adv-row"><label>Inter máximo (s)</label><input id="adv-inter-max" type="number" min="3" max="600" step="1" value="${c.options.interMaxSec}"></div>
+      </div>
+      <div class="adv-row"><label>Despedir tras ausencia (s)</label><input id="adv-farewell-delay" type="number" min="0.5" max="20" step="0.1" value="${c.options.farewellDelaySec}"></div>
+      <div class="adv-muted">La bienvenida conserva el umbral actual probado (~0.18 s). El inter elige al azar entre las situaciones marcadas para uso automático.</div>
       <div class="adv-row"><label>Volumen maestro</label><div style="display:flex;align-items:center;gap:6px;min-width:180px"><input id="adv-master-volume" type="range" min="0" max="1" step="0.05" value="${c.audio.masterVolume}" style="flex:1" oninput="document.getElementById('adv-master-volume-label').textContent=Math.round(this.value*100)+'%'"><span id="adv-master-volume-label" class="adv-muted">${Math.round(c.audio.masterVolume*100)}%</span></div></div></div>
     </details>
     <details class="adv-card" open><summary><b>Situaciones / carpetas de audio</b></summary>
@@ -904,7 +931,11 @@ function readAdvancedConfig(){
   c.mode.trollEnd=document.getElementById('adv-troll-end')?.value||c.mode.trollEnd;
   c.options.autoGreet=!!document.getElementById('adv-auto-greet')?.checked;
   c.options.autoFarewell=!!document.getElementById('adv-auto-farewell')?.checked;
+  c.options.autoInterVisit=!!document.getElementById('adv-auto-inter')?.checked;
   c.options.promosEnabled=!!document.getElementById('adv-promos')?.checked;
+  c.options.interMinSec=Number(document.getElementById('adv-inter-min')?.value ?? c.options.interMinSec);
+  c.options.interMaxSec=Number(document.getElementById('adv-inter-max')?.value ?? c.options.interMaxSec);
+  c.options.farewellDelaySec=Number(document.getElementById('adv-farewell-delay')?.value ?? c.options.farewellDelaySec);
   c.audio.masterVolume=Number(document.getElementById('adv-master-volume')?.value ?? c.audio.masterVolume);
   ADV_DRAFT=normalizeRuntimeConfig(c);
   return cloneJson(ADV_DRAFT);
@@ -945,10 +976,10 @@ async function triggerJackLevel(level){
 
 // API única preparada para Firebase/ERP. La integración futura debe usar esta puerta.
 window.AnimatronicAPI = {
-  getState(){ return {speaking:S.speaking,faceTracking:S.faceTracking,animation:S.anim,mode:getActiveMode(),modeForced:RUNTIME_CONFIG.mode.forced||'',autoGreet:S.autoGreet,autoFarewell:S.autoFarewell,promosEnabled:S.promosEnabled,volume:S.volume,configVersion:RUNTIME_CONFIG.version}; },
+  getState(){ return {speaking:S.speaking,faceTracking:S.faceTracking,animation:S.anim,mode:getActiveMode(),modeForced:RUNTIME_CONFIG.mode.forced||'',autoGreet:S.autoGreet,autoFarewell:S.autoFarewell,autoInterVisit:RUNTIME_CONFIG.options.autoInterVisit,promosEnabled:S.promosEnabled,volume:S.volume,configVersion:RUNTIME_CONFIG.version}; },
   getConfig(){ return currentConfigSnapshot(); },
   setMode(mode){ setTrollMode(mode||''); return this.getState(); },
-  setOption(name,value){ if(name==='autoGreet')setAutoGreet(value); else if(name==='autoFarewell')setAutoFarewell(value); else if(name==='promosEnabled')setPromosEnabled(value); else if(name==='faceTracking'){ if(value&&!S.faceTracking)startFaceTracking(); if(!value&&S.faceTracking)stopFaceTracking(); } else throw new Error('Opción remota no permitida'); return this.getState(); },
+  setOption(name,value){ if(name==='autoGreet')setAutoGreet(value); else if(name==='autoFarewell')setAutoFarewell(value); else if(name==='autoInterVisit'){ RUNTIME_CONFIG.options.autoInterVisit=!!value; applyRuntimeConfig(true); } else if(name==='promosEnabled')setPromosEnabled(value); else if(name==='faceTracking'){ if(value&&!S.faceTracking)startFaceTracking(); if(!value&&S.faceTracking)stopFaceTracking(); } else throw new Error('Opción remota no permitida'); return this.getState(); },
   setPoolConfig(name,patch){ if(!RUNTIME_CONFIG.pools[name])throw new Error('Carpeta desconocida'); RUNTIME_CONFIG.pools[name]=Object.assign({},RUNTIME_CONFIG.pools[name],patch||{}); applyRuntimeConfig(true); return cloneJson(RUNTIME_CONFIG.pools[name]); },
   triggerEmotion(name){ if(!ANIMS.includes(name))throw new Error('Emoción desconocida'); setEmotion(name); return {ok:true,animation:S.anim}; },
   triggerCategory(name){ if(!AUDIO_POOLS_CONFIG[name])throw new Error('Categoría desconocida'); return speakFromCategory(name); },
@@ -1154,11 +1185,46 @@ async function faceTrackingLoop() {
   setTimeout(faceTrackingLoop, 35);
 }
 
-// ── SALUDO / DESPEDIDA AUTOMÁTICOS ──
-// umbrales en "frames" del loop (~35ms cada uno): evita disparar por parpadeos/falsos positivos
+// ── SALUDO / INTER / DESPEDIDA AUTOMÁTICOS ──
+// La bienvenida conserva EXACTAMENTE el umbral probado del archivo anterior.
 const PRESENT_FRAMES_TO_GREET = 5;   // ~175ms de cara estable → saluda
-const ABSENT_FRAMES_TO_FAREWELL = 45; // ~1.6s sin cara → se despide / resetea
-const MIN_EVENT_GAP_MS = 4000;        // no saluda/despide dos veces seguidas muy rápido
+const MIN_EVENT_GAP_MS = 4000;
+
+let visitInterNextAt = 0;
+let visitInterBusy = false;
+let visitInterLastPool = '';
+
+function visitFarewellFrames(){
+  const sec=Number(RUNTIME_CONFIG?.options?.farewellDelaySec||1.6);
+  return Math.max(1,Math.round((sec*1000)/35));
+}
+function scheduleNextVisitInter(now=performance.now()){
+  if(!RUNTIME_CONFIG?.options?.autoInterVisit){ visitInterNextAt=0; return; }
+  const min=Math.max(3,Number(RUNTIME_CONFIG.options.interMinSec)||20);
+  const max=Math.max(min,Number(RUNTIME_CONFIG.options.interMaxSec)||35);
+  visitInterNextAt=now+(min+Math.random()*(max-min))*1000;
+}
+function resetVisitInter(){ visitInterNextAt=0; visitInterBusy=false; visitInterLastPool=''; }
+function eligibleVisitPools(){
+  return Object.entries(RUNTIME_CONFIG?.pools||{})
+    .filter(([k,p])=>p && p.enabled!==false && p.autoVisit && AUDIO_POOLS_CONFIG[k])
+    .filter(([k,p])=>(Number(p.tope)||0)>0 || ((S.promosEnabled??true) && (CATEGORY_PROMOS[k]||[]).length>0))
+    .map(([k])=>k);
+}
+async function triggerVisitIntermission(){
+  if(visitInterBusy || S.speaking || !RUNTIME_CONFIG?.options?.autoInterVisit) return false;
+  let pools=eligibleVisitPools();
+  if(!pools.length){ scheduleNextVisitInter(); return false; }
+  if(pools.length>1 && visitInterLastPool) pools=pools.filter(x=>x!==visitInterLastPool).concat(pools.filter(x=>x===visitInterLastPool));
+  const pool=pools[Math.floor(Math.random()*Math.min(pools.length,Math.max(1,pools.length-(pools.length>1?1:0))))];
+  visitInterBusy=true;
+  try{
+    await speakFromCategory(pool);
+    visitInterLastPool=pool;
+    return true;
+  }catch(e){ console.warn('Inter visita:',e); return false; }
+  finally{ visitInterBusy=false; scheduleNextVisitInter(); }
+}
 
 function maybeTriggerPresenceEvents(faceDetected) {
   const now = performance.now();
@@ -1167,6 +1233,10 @@ function maybeTriggerPresenceEvents(faceDetected) {
     S.facePresentStreak++;
     S.faceAbsentStreak = 0;
 
+    // Arranca el reloj de "media visita" desde que la cara ya es estable,
+    // aunque el saludo automático esté apagado.
+    if(S.facePresentStreak === PRESENT_FRAMES_TO_GREET && !visitInterNextAt) scheduleNextVisitInter(now);
+
     if (S.autoGreet && !S.hasGreetedThisVisit &&
         S.facePresentStreak >= PRESENT_FRAMES_TO_GREET &&
         !S.speaking && (now - S.lastGreetAt > MIN_EVENT_GAP_MS)) {
@@ -1174,16 +1244,23 @@ function maybeTriggerPresenceEvents(faceDetected) {
       S.hasGreetedThisVisit = true;
       S.lastGreetAt = now;
     }
+
+    if(visitInterNextAt && now>=visitInterNextAt && !S.speaking) triggerVisitIntermission();
   } else {
     S.faceAbsentStreak++;
     S.facePresentStreak = 0;
 
-    if (S.faceAbsentStreak === ABSENT_FRAMES_TO_FAREWELL && S.hasGreetedThisVisit) {
-      if (S.autoFarewell && !S.speaking && (now - S.lastGreetAt > MIN_EVENT_GAP_MS)) {
-        triggerFarewell();
-        S.lastGreetAt = now;
+    const farewellFrames=visitFarewellFrames();
+    if (S.faceAbsentStreak >= farewellFrames) {
+      // Al confirmar que la visita terminó, cancela cualquier inter pendiente.
+      resetVisitInter();
+      if(S.hasGreetedThisVisit){
+        if (S.autoFarewell && !S.speaking && (now - S.lastGreetAt > MIN_EVENT_GAP_MS)) {
+          triggerFarewell();
+          S.lastGreetAt = now;
+        }
+        S.hasGreetedThisVisit = false;
       }
-      S.hasGreetedThisVisit = false; // libre para saludar de nuevo si vuelve
     }
   }
 }
