@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Control remoto A2 — Halloween 2026</title>
+<style>
+:root{--bg:#0b0b0d;--panel:#151519;--panel2:#1d1d23;--line:#303039;--text:#f2f2f4;--muted:#9a9aa3;--accent:#ff5a1f;--ok:#36d67e;--warn:#ffcc55;--bad:#ff5e68}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;padding:14px}
+h1{font-size:20px;margin:0 0 12px}h2{font-size:14px;margin:0 0 8px}.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px;margin:10px 0}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.status-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}.kv{background:var(--panel2);border-radius:10px;padding:8px}
+.k{font-size:11px;color:var(--muted)}.v{font-size:14px;font-weight:700;margin-top:3px;word-break:break-word}
+button{border:1px solid var(--line);background:#24242b;color:#fff;border-radius:10px;padding:11px 12px;font-weight:700;font-size:13px;min-width:84px}
+button:active{transform:scale(.98)}button.primary{background:var(--accent);border-color:var(--accent)}button.ok{border-color:#2f8f5d}button.warn{border-color:#9a7a1c}.small{font-size:11px;color:var(--muted);line-height:1.45}
+#log{max-height:150px;overflow:auto;background:#09090b;border:1px solid var(--line);border-radius:10px;padding:8px;font:11px/1.4 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre-wrap}
+</style>
+</head>
+<body>
+<h1>🎃 Control remoto A2</h1>
+
+<div class="card">
+  <h2>Conexión</h2>
+  <div class="status-grid">
+    <div class="kv"><div class="k">Firebase</div><div class="v" id="firebaseStatus">INICIANDO…</div></div>
+    <div class="kv"><div class="k">A2</div><div class="v" id="a2Status">—</div></div>
+    <div class="kv"><div class="k">Hablando</div><div class="v" id="speaking">—</div></div>
+    <div class="kv"><div class="k">Cara</div><div class="v" id="face">—</div></div>
+    <div class="kv"><div class="k">Modo</div><div class="v" id="mode">—</div></div>
+    <div class="kv"><div class="k">Emoción</div><div class="v" id="emotion">—</div></div>
+  </div>
+  <div class="row" style="margin-top:10px"><button class="primary" onclick="sendCommand('ping',{})">PING</button></div>
+</div>
+
+<div class="card">
+  <h2>Modo</h2>
+  <div class="row">
+    <button onclick="sendCommand('mode',{mode:''})">AUTO</button>
+    <button onclick="sendCommand('mode',{mode:'familiar'})">FAMILIAR</button>
+    <button onclick="sendCommand('mode',{mode:'troll'})">TROLL</button>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Opciones</h2>
+  <div class="row">
+    <button onclick="toggleOption('promosEnabled')">PROMOS</button>
+    <button onclick="toggleOption('autoGreet')">SALUDOS</button>
+    <button onclick="toggleOption('autoFarewell')">DESPEDIDA</button>
+  </div>
+  <div class="small" style="margin-top:8px">Cada botón manda al A2 el estado contrario al que reporta ahora.</div>
+</div>
+
+<div class="card">
+  <h2>Emociones directas</h2>
+  <div class="row">
+    <button onclick="sendCommand('emotion',{name:'evil'})">EVIL</button>
+    <button onclick="sendCommand('emotion',{name:'glitch'})">GLITCH</button>
+    <button onclick="sendCommand('emotion',{name:'happy'})">HAPPY</button>
+    <button onclick="sendCommand('emotion',{name:'possessed'})">POSEÍDO</button>
+    <button onclick="sendCommand('emotion',{name:'siniestro'})">SINIESTRO</button>
+    <button onclick="sendCommand('emotion',{name:'idle'})">IDLE</button>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Audio disponible ahora</h2>
+  <div class="row">
+    <button class="ok" onclick="sendCommand('category',{name:'greet_familiar'})">▶ FAMILIAR</button>
+    <button class="warn" onclick="sendCommand('category',{name:'greet_troll'})">▶ TROLL</button>
+  </div>
+  <div class="small" style="margin-top:8px">Sólo incluyo Familiar y Troll porque son las carpetas que ya tienen audios.</div>
+</div>
+
+<div class="card">
+  <h2>Jack</h2>
+  <div class="row">
+    <button onclick="sendCommand('jack_level',{level:'N1'})">N1</button>
+    <button onclick="sendCommand('jack_level',{level:'N2'})">N2</button>
+    <button onclick="sendCommand('jack_level',{level:'N3'})">N3</button>
+    <button onclick="sendCommand('jack_level',{level:'N4'})">N4</button>
+  </div>
+  <div class="small" style="margin-top:8px">Usa la configuración guardada en el A2 para cada nivel. Si un nivel apunta a una carpeta sin audios, la parte sonora no tendrá contenido todavía.</div>
+</div>
+
+<div class="card">
+  <h2>Última respuesta</h2>
+  <div id="log">Esperando…</div>
+</div>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-app.js";
+import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-auth.js";
+import { getDatabase, ref, push, set, onValue, onChildAdded } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-database.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyBkw1MxkhJYnqxfVxq77aY1_x0yIHHdOy4",
+  authDomain: "halloween-2026-be987.firebaseapp.com",
+  databaseURL: "https://halloween-2026-be987-default-rtdb.firebaseio.com/",
+  projectId: "halloween-2026-be987",
+  storageBucket: "halloween-2026-be987.firebasestorage.app",
+  messagingSenderId: "286510623769",
+  appId: "1:286510623769:web:5fe34a3ad2fffa8a374e88"
+};
+
+const ROOT='halloween2026/animatronic';
+const DEVICE_ID='A2';
+const app=initializeApp(firebaseConfig);
+const auth=getAuth(app);
+const db=getDatabase(app);
+let state={};
+const $=id=>document.getElementById(id);
+
+function log(msg){
+  const t=new Date().toLocaleTimeString();
+  $('log').textContent=`[${t}] ${msg}
+`+$('log').textContent;
+}
+function yn(v){return v?'SÍ':'NO'}
+function paintState(s){
+  state=s||{};
+  $('a2Status').textContent=state.online?'ONLINE':'OFFLINE';
+  $('a2Status').style.color=state.online?'#36d67e':'#ff5e68';
+  $('speaking').textContent=yn(!!state.speaking);
+  $('face').textContent=yn(!!state.facePresent);
+  $('mode').textContent=state.mode||state.activeMode||'—';
+  $('emotion').textContent=state.animation||state.anim||'—';
+}
+
+window.sendCommand=async function(type,payload){
+  try{
+    if(!auth.currentUser) throw new Error('Todavía no autenticado');
+    const node=push(ref(db,`${ROOT}/commands/${DEVICE_ID}`));
+    const now=Date.now();
+    await set(node,{type,target:DEVICE_ID,createdAt:now,expiresAt:now+30000,payload:payload||{}});
+    log(`ENVIADO ${type} · ${node.key}`);
+  }catch(e){log(`ERROR ${type}: ${e.message}`)}
+};
+
+window.toggleOption=function(name){
+  const current=!!state[name];
+  window.sendCommand('option',{name,value:!current});
+};
+
+onAuthStateChanged(auth,user=>{
+  $('firebaseStatus').textContent=user?'AUTENTICADO':'SIN AUTH';
+  $('firebaseStatus').style.color=user?'#36d67e':'#ffcc55';
+});
+
+await signInAnonymously(auth);
+
+onValue(ref(db,`${ROOT}/devices/${DEVICE_ID}/state`),snap=>paintState(snap.val()||{}));
+
+onChildAdded(ref(db,`${ROOT}/acks/${DEVICE_ID}`),snap=>{
+  const a=snap.val()||{};
+  log(`ACK ${a.type||'?'} · ${a.status||'?'}${a.message?' · '+a.message:''}`);
+});
+</script>
+</body>
+</html>
