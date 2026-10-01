@@ -343,6 +343,42 @@
     z-index: 20;
   }
   #voice-indicator.active { display: block; }
+
+
+  /* ── CONFIGURACIÓN AVANZADA V2 (overlay aislado; no altera stage/zoom/fullscreen) ── */
+  #adv-config-overlay {
+    display:none; position:fixed; inset:0; z-index:9999;
+    background:rgba(0,0,0,0.96); color:var(--textbright);
+    overflow:auto; -webkit-overflow-scrolling:touch;
+    font-family:'Share Tech Mono', monospace;
+  }
+  #adv-config-overlay.open { display:block; }
+  .adv-wrap { max-width:920px; margin:0 auto; padding:14px 12px 80px; }
+  .adv-head { position:sticky; top:0; z-index:2; background:#070707; border-bottom:1px solid var(--border); padding:10px 0; display:flex; align-items:center; gap:8px; }
+  .adv-title { color:var(--accent); font-family:'Creepster',cursive; font-size:20px; letter-spacing:.06em; flex:1; }
+  .adv-card { background:#0d0d0d; border:1px solid var(--border); border-radius:7px; padding:11px; margin-top:10px; }
+  .adv-card h3 { color:var(--accent2); font-size:12px; letter-spacing:.12em; text-transform:uppercase; margin-bottom:9px; }
+  .adv-row { display:flex; align-items:center; justify-content:space-between; gap:10px; margin:8px 0; }
+  .adv-row label { font-size:10px; color:var(--textbright); }
+  .adv-row input[type="time"], .adv-row input[type="number"], .adv-row select {
+    background:#050505; border:1px solid #333; color:#ddd; border-radius:4px; padding:7px; font-family:inherit; min-width:110px;
+  }
+  .adv-check { display:inline-flex; align-items:center; gap:5px; padding:5px 7px; border:1px solid #282828; border-radius:5px; margin:3px 2px; font-size:9px; color:#aaa; }
+  .adv-check input { accent-color:var(--accent); }
+  .adv-emotions { display:flex; flex-wrap:wrap; gap:2px; margin-top:5px; }
+  .adv-grid2 { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }
+  .adv-btn { background:#191919; color:#bbb; border:1px solid #383838; border-radius:5px; padding:9px 10px; font-family:inherit; font-size:10px; cursor:pointer; }
+  .adv-btn.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+  .adv-btn.warn { border-color:#784c00; color:#ffad32; }
+  .adv-actions { display:flex; flex-wrap:wrap; gap:7px; margin-top:10px; }
+  .adv-muted { color:#777; font-size:9px; line-height:1.45; }
+  .adv-status { font-size:9px; color:var(--green); min-height:14px; margin-top:6px; }
+  .adv-pool { border-top:1px solid #1f1f1f; padding-top:9px; margin-top:9px; }
+  .adv-pool:first-child { border-top:none; padding-top:0; margin-top:0; }
+  .adv-pool-name { color:#ddd; font-size:11px; font-weight:bold; }
+  .adv-level { border-left:3px solid #402060; padding-left:9px; }
+  @media (max-width:560px) { .adv-grid2 { grid-template-columns:1fr; } .adv-row { align-items:flex-start; } }
+
 </style>
 </head>
 <body>
@@ -448,7 +484,7 @@
         <div class="setting-row">
           <span class="setting-label">Modo de frases</span>
           <select id="troll-mode-select" onchange="setTrollMode(this.value)" style="background:#0a0a0a; border:1px solid var(--border); color:var(--textbright); font-family:'Share Tech Mono',monospace; font-size:11px; padding:6px; border-radius:4px;">
-            <option value="">Automático (9pm-6am = troll)</option>
+            <option value="">Automático por horario</option>
             <option value="familiar">Forzar familiar</option>
             <option value="troll">Forzar troll</option>
           </select>
@@ -465,6 +501,10 @@
         <div class="setting-row">
           <span class="setting-label">Transición entre emociones</span>
           <input type="range" class="speed-slider" min="0" max="1.5" step="0.05" value="0.4" oninput="setTransDuration(this.value)" id="trans-slider">
+        </div>
+        <div class="setting-row">
+          <span class="setting-label">Configuración avanzada</span>
+          <button class="audio-btn" type="button" onclick="openAdvancedConfig()">Abrir</button>
         </div>
       </div>
     </div>
@@ -525,7 +565,14 @@ const ANIMS = ['idle','blink','happy','angry','furia','sad','surprised','sleepy'
 // cada 'key' busca primero audio/<key>.mp3; si no existe, cae a ElevenLabs en vivo, luego voz navegador.
 const GREETINGS = {
   familiar: [
-   
+    { key: 'familiar_saludo_01', text: 'Te puedo ver... no corras, apenas empezamos.', emo: 'suspicious' },
+    { key: 'familiar_saludo_02', text: 'Ya te vi...', emo: 'suspicious' },
+    { key: 'familiar_saludo_03', text: 'Te miro el alma... y también si traes cambio para el dulce.', emo: 'evil' },
+    { key: 'familiar_saludo_04', text: 'Oh, un visitante. Hacía años que no parpadeaba de la emoción.', emo: 'happy' },
+    { key: 'familiar_saludo_05', text: 'Un alma más se acerca al puesto.', emo: 'possessed' },
+    { key: 'familiar_saludo_06', text: '¿Buscas ofertas o buscas problemas? Aquí hay de los dos.', emo: 'curioso' },
+    { key: 'familiar_saludo_07', text: 'No hay descuentos, pero sí sustos gratis.', emo: 'riendo' },
+    { key: 'familiar_saludo_08', text: 'Alguien despertó a la máscara. Espero que no te arrepientas.', emo: 'glitch' },
   ],
   troll: [
     { key: 'troll_saludo_01', text: 'Ay no, otro que viene a grabar video en vez de comprar.', emo: 'evil' },
@@ -541,7 +588,9 @@ const GREETINGS = {
 
 const FAREWELLS = {
   familiar: [
-    
+    { key: 'familiar_despedida_01', text: '¿Ya te vas? Yo sigo aquí... siempre.', emo: 'sleepy' },
+    { key: 'familiar_despedida_02', text: 'Vuelve pronto, o no. Yo no decido eso.', emo: 'idle' },
+    { key: 'familiar_despedida_03', text: 'Se fue. Otra alma que escapa... por ahora.', emo: 'glitch' },
   ],
   troll: [
     { key: 'troll_despedida_01', text: '¿Ya te vas? Qué rápido corren los valientes.', emo: 'riendo' },
@@ -565,10 +614,272 @@ const AUDIO_POOLS_CONFIG = {
   situ_regateo:  { folder: 'audio/situ_regateo',  tope: 0, emotions: ['suspicious','riendo','travieso'] },
   situ_venta:    { folder: 'audio/situ_venta',    tope: 0, emotions: ['curioso','evil','glitch'] },
   fx_terror:     { folder: 'audio/fx_terror',     tope: 0, emotions: ['evil','glitch','possessed','estatico','membrana','furia'] },
-  greet_familiar:     { folder: 'audio/greet_familiar',     tope: 11, emotions: ['happy','siniestro','suspicious','travieso','travieso','membrana','obturador','spin','surprised','idle'] },
-  greet_troll:        { folder: 'audio/greet_troll',        tope: 4, emotions: ['evil','riendo','possessed','glitch','siniestro'] },
+  greet_familiar:     { folder: 'audio/greet_familiar',     tope: 0, emotions: ['happy','curioso','suspicious','travieso'] },
+  greet_troll:        { folder: 'audio/greet_troll',        tope: 0, emotions: ['evil','riendo','possessed','glitch','siniestro'] },
   despedida_familiar: { folder: 'audio/despedida_familiar', tope: 0, emotions: ['sleepy','sad','idle'] },
   despedida_troll:    { folder: 'audio/despedida_troll',    tope: 0, emotions: ['riendo','evil','possessed','escalofrio'] },
+
+};
+
+// ── CONFIGURACIÓN OPERATIVA V2 ──
+// Esta capa guarda comportamiento; NO toca el motor gráfico de ojos/animaciones.
+const CONFIG_STORAGE_KEY = 'animatronic_config_v2';
+const CONFIG_KIND = 'ANIMATRONIC_CONFIG_V2';
+const POOL_LABELS = {
+  situ_mascaras:'Máscaras', situ_indeciso:'Indeciso', situ_fiado:'Fiado', situ_regateo:'Regateo', situ_venta:'Venta',
+  fx_terror:'Efectos de terror', greet_familiar:'Saludo familiar', greet_troll:'Saludo troll',
+  despedida_familiar:'Despedida familiar', despedida_troll:'Despedida troll'
+};
+const JACK_LEVEL_LABELS = { N1:'N1 · $50–99', N2:'N2 · $100–149', N3:'N3 · $150–299', N4:'N4 · $300+' };
+
+function cloneJson(v){ return JSON.parse(JSON.stringify(v)); }
+function clampNum(v,min,max,fallback){ v=Number(v); return Number.isFinite(v)?Math.max(min,Math.min(max,v)):fallback; }
+function timeToMin(v){ const m=/^(\d{1,2}):(\d{2})$/.exec(String(v||'')); if(!m)return null; const h=Number(m[1]),mm=Number(m[2]); return h>=0&&h<24&&mm>=0&&mm<60?h*60+mm:null; }
+function safeMode(v){ return v==='familiar'||v==='troll'?v:''; }
+
+const DEFAULT_RUNTIME_CONFIG = {
+  kind: CONFIG_KIND,
+  version: 2,
+  mode: {
+    forced: safeMode(localStorage.getItem('troll_mode_force') || ''),
+    trollStart: '21:00',
+    trollEnd: '06:00'
+  },
+  options: {
+    autoGreet: S.autoGreet,
+    autoFarewell: S.autoFarewell,
+    promosEnabled: S.promosEnabled
+  },
+  audio: { masterVolume: S.volume },
+  pools: Object.fromEntries(Object.entries(AUDIO_POOLS_CONFIG).map(([k,v])=>[k,{
+    enabled: true,
+    tope: Number(v.tope)||0,
+    emotions: [...(v.emotions||[])],
+    numberEmotions: cloneJson(v.numberEmotions||{}),
+    volume: 1,
+    priority: 30
+  }])),
+  jackEffects: {
+    N1:{enabled:true,pool:'fx_terror',emotions:['happy','curioso'],priority:60},
+    N2:{enabled:true,pool:'fx_terror',emotions:['evil','suspicious','glitch'],priority:70},
+    N3:{enabled:true,pool:'fx_terror',emotions:['evil','possessed','siniestro'],priority:80},
+    N4:{enabled:true,pool:'fx_terror',emotions:['furia','possessed','glitch','estatico'],priority:90}
+  }
+};
+
+function mergeRuntimeConfig(base, incoming){
+  const out=cloneJson(base), src=(incoming&&typeof incoming==='object')?incoming:{};
+  if(src.mode) Object.assign(out.mode,src.mode);
+  if(src.options) Object.assign(out.options,src.options);
+  if(src.audio) Object.assign(out.audio,src.audio);
+  if(src.pools) for(const [k,v] of Object.entries(src.pools)) if(out.pools[k]&&v&&typeof v==='object') Object.assign(out.pools[k],v);
+  if(src.jackEffects) for(const [k,v] of Object.entries(src.jackEffects)) if(out.jackEffects[k]&&v&&typeof v==='object') Object.assign(out.jackEffects[k],v);
+  out.kind=CONFIG_KIND; out.version=2;
+  return out;
+}
+
+function normalizeRuntimeConfig(cfg){
+  const out=mergeRuntimeConfig(DEFAULT_RUNTIME_CONFIG,cfg);
+  out.mode.forced=safeMode(out.mode.forced);
+  if(timeToMin(out.mode.trollStart)===null) out.mode.trollStart='21:00';
+  if(timeToMin(out.mode.trollEnd)===null) out.mode.trollEnd='06:00';
+  out.options.autoGreet=!!out.options.autoGreet;
+  out.options.autoFarewell=!!out.options.autoFarewell;
+  out.options.promosEnabled=!!out.options.promosEnabled;
+  out.audio.masterVolume=clampNum(out.audio.masterVolume,0,1,0.7);
+  for(const [k,p] of Object.entries(out.pools)){
+    p.enabled=p.enabled!==false;
+    p.tope=Math.max(0,Math.floor(Number(p.tope)||0));
+    p.volume=clampNum(p.volume,0,1,1);
+    p.priority=Math.max(0,Math.min(100,Math.floor(Number(p.priority)||30)));
+    p.emotions=[...new Set((p.emotions||[]).filter(x=>ANIMS.includes(x)))];
+    p.numberEmotions=(p.numberEmotions&&typeof p.numberEmotions==='object')?p.numberEmotions:{};
+  }
+  for(const [k,j] of Object.entries(out.jackEffects)){
+    j.enabled=j.enabled!==false;
+    if(!AUDIO_POOLS_CONFIG[j.pool]) j.pool='fx_terror';
+    j.priority=Math.max(0,Math.min(100,Math.floor(Number(j.priority)||60)));
+    j.emotions=[...new Set((j.emotions||[]).filter(x=>ANIMS.includes(x)))];
+  }
+  return out;
+}
+
+function loadRuntimeConfig(){
+  try{
+    const raw=localStorage.getItem(CONFIG_STORAGE_KEY);
+    return normalizeRuntimeConfig(raw?JSON.parse(raw):DEFAULT_RUNTIME_CONFIG);
+  }catch(e){ console.warn('Config V2 inválida; usando valores seguros',e); return normalizeRuntimeConfig(DEFAULT_RUNTIME_CONFIG); }
+}
+let RUNTIME_CONFIG = loadRuntimeConfig();
+
+function saveRuntimeConfig(){
+  RUNTIME_CONFIG=normalizeRuntimeConfig(RUNTIME_CONFIG);
+  localStorage.setItem(CONFIG_STORAGE_KEY,JSON.stringify(RUNTIME_CONFIG));
+  // Compatibilidad con las preferencias previas del HTML.
+  localStorage.setItem('auto_greet',RUNTIME_CONFIG.options.autoGreet?'1':'0');
+  localStorage.setItem('auto_farewell',RUNTIME_CONFIG.options.autoFarewell?'1':'0');
+  localStorage.setItem('promos_enabled',RUNTIME_CONFIG.options.promosEnabled?'1':'0');
+  localStorage.setItem('troll_mode_force',RUNTIME_CONFIG.mode.forced||'');
+}
+
+function applyRuntimeConfig(persist=true){
+  RUNTIME_CONFIG=normalizeRuntimeConfig(RUNTIME_CONFIG);
+  S.autoGreet=RUNTIME_CONFIG.options.autoGreet;
+  S.autoFarewell=RUNTIME_CONFIG.options.autoFarewell;
+  S.promosEnabled=RUNTIME_CONFIG.options.promosEnabled;
+  S.volume=RUNTIME_CONFIG.audio.masterVolume;
+  for(const [k,cfg] of Object.entries(RUNTIME_CONFIG.pools)){
+    if(!AUDIO_POOLS_CONFIG[k]) continue;
+    AUDIO_POOLS_CONFIG[k].enabled=cfg.enabled;
+    AUDIO_POOLS_CONFIG[k].tope=cfg.tope;
+    AUDIO_POOLS_CONFIG[k].emotions=[...cfg.emotions];
+    AUDIO_POOLS_CONFIG[k].numberEmotions=cloneJson(cfg.numberEmotions||{});
+    AUDIO_POOLS_CONFIG[k].volume=cfg.volume;
+    AUDIO_POOLS_CONFIG[k].priority=cfg.priority;
+  }
+  if(persist) saveRuntimeConfig();
+  const vol=document.querySelector('.vol-slider'); if(vol)vol.value=String(S.volume);
+  const modeSel=document.getElementById('troll-mode-select'); if(modeSel)modeSel.value=RUNTIME_CONFIG.mode.forced||'';
+  document.getElementById('toggle-auto-greet')?.classList.toggle('on',S.autoGreet);
+  document.getElementById('toggle-auto-farewell')?.classList.toggle('on',S.autoFarewell);
+  document.getElementById('toggle-promos')?.classList.toggle('on',S.promosEnabled);
+  if(typeof updateModeStatus==='function') updateModeStatus();
+}
+applyRuntimeConfig(false);
+
+function setAutoGreet(value){ RUNTIME_CONFIG.options.autoGreet=!!value; applyRuntimeConfig(true); return S.autoGreet; }
+function setAutoFarewell(value){ RUNTIME_CONFIG.options.autoFarewell=!!value; applyRuntimeConfig(true); return S.autoFarewell; }
+function setPromosEnabled(value){ RUNTIME_CONFIG.options.promosEnabled=!!value; applyRuntimeConfig(true); return S.promosEnabled; }
+function setMasterVolume(value){ RUNTIME_CONFIG.audio.masterVolume=clampNum(value,0,1,S.volume); applyRuntimeConfig(true); return S.volume; }
+
+function currentConfigSnapshot(){ return cloneJson(RUNTIME_CONFIG); }
+
+function renderEmotionChecks(selected,prefix){
+  const set=new Set(selected||[]);
+  return ANIMS.map(a=>`<label class="adv-check"><input type="checkbox" data-emo-group="${prefix}" value="${a}" ${set.has(a)?'checked':''}>${a}</label>`).join('');
+}
+function selectedEmotionChecks(prefix){
+  return [...document.querySelectorAll(`input[data-emo-group="${prefix}"]:checked`)].map(x=>x.value).filter(x=>ANIMS.includes(x));
+}
+function escAttr(v){ return String(v??'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;'); }
+
+function ensureAdvancedOverlay(){
+  if(document.getElementById('adv-config-overlay')) return;
+  const d=document.createElement('div'); d.id='adv-config-overlay';
+  d.innerHTML=`<div class="adv-wrap"><div class="adv-head"><div class="adv-title">☠ CONFIGURACIÓN V2</div><button class="adv-btn" type="button" onclick="closeAdvancedConfig()">Cerrar</button></div><div id="adv-config-body"></div></div>`;
+  document.body.appendChild(d);
+}
+function openAdvancedConfig(){ ensureAdvancedOverlay(); renderAdvancedConfig(); document.getElementById('adv-config-overlay').classList.add('open'); }
+function closeAdvancedConfig(){ document.getElementById('adv-config-overlay')?.classList.remove('open'); }
+
+function renderAdvancedConfig(){
+  ensureAdvancedOverlay();
+  const c=RUNTIME_CONFIG;
+  const poolOptions=Object.keys(AUDIO_POOLS_CONFIG).map(k=>`<option value="${k}">${POOL_LABELS[k]||k}</option>`).join('');
+  const pools=Object.entries(c.pools).map(([k,p])=>`<div class="adv-pool" data-pool-card="${k}">
+    <div class="adv-row"><div><div class="adv-pool-name">${POOL_LABELS[k]||k}</div><div class="adv-muted">${escAttr(AUDIO_POOLS_CONFIG[k]?.folder||'')}</div></div><label class="adv-check"><input id="adv-pool-enabled-${k}" type="checkbox" ${p.enabled?'checked':''}>Usar carpeta</label></div>
+    <div class="adv-grid2">
+      <div class="adv-row"><label>Audios numerados / tope</label><input id="adv-pool-tope-${k}" type="number" min="0" step="1" value="${p.tope}"></div>
+      <div class="adv-row"><label>Prioridad futura</label><input id="adv-pool-priority-${k}" type="number" min="0" max="100" step="1" value="${p.priority}"></div>
+    </div>
+    <div class="adv-row"><label>Volumen de carpeta</label><div style="display:flex;align-items:center;gap:6px;min-width:180px"><input id="adv-pool-volume-${k}" type="range" min="0" max="1" step="0.05" value="${p.volume}" style="flex:1" oninput="document.getElementById('adv-pool-volume-label-${k}').textContent=Math.round(this.value*100)+'%'"><span id="adv-pool-volume-label-${k}" class="adv-muted">${Math.round(p.volume*100)}%</span></div></div>
+    <div class="adv-muted">Emociones permitidas para esta carpeta</div><div class="adv-emotions">${renderEmotionChecks(p.emotions,'pool-'+k)}</div>
+    <div class="adv-actions"><button class="adv-btn" type="button" onclick="testPoolFromAdvanced('${k}')">▶ Probar carpeta</button></div>
+  </div>`).join('');
+
+  const jack=Object.entries(c.jackEffects).map(([level,j])=>`<div class="adv-pool adv-level">
+    <div class="adv-row"><div class="adv-pool-name">${JACK_LEVEL_LABELS[level]||level}</div><label class="adv-check"><input id="adv-jack-enabled-${level}" type="checkbox" ${j.enabled?'checked':''}>Activo</label></div>
+    <div class="adv-grid2"><div class="adv-row"><label>Audio / carpeta</label><select id="adv-jack-pool-${level}">${poolOptions}</select></div><div class="adv-row"><label>Prioridad</label><input id="adv-jack-priority-${level}" type="number" min="0" max="100" value="${j.priority}"></div></div>
+    <div class="adv-muted">Emociones posibles al llegar a este nivel</div><div class="adv-emotions">${renderEmotionChecks(j.emotions,'jack-'+level)}</div>
+    <div class="adv-actions"><button class="adv-btn" type="button" onclick="testJackFromAdvanced('${level}')">▶ Probar ${level}</button></div>
+  </div>`).join('');
+
+  document.getElementById('adv-config-body').innerHTML=`
+    <div class="adv-card"><h3>Modo de frases y horario</h3>
+      <div class="adv-row"><label>Modo</label><select id="adv-mode-force"><option value="">Automático por horario</option><option value="familiar">Forzar familiar</option><option value="troll">Forzar troll</option></select></div>
+      <div class="adv-grid2"><div class="adv-row"><label>Troll desde</label><input id="adv-troll-start" type="time" value="${escAttr(c.mode.trollStart)}"></div><div class="adv-row"><label>Troll hasta</label><input id="adv-troll-end" type="time" value="${escAttr(c.mode.trollEnd)}"></div></div>
+      <div class="adv-muted">Si el rango cruza medianoche, por ejemplo 21:00 → 06:00, se interpreta correctamente.</div>
+    </div>
+    <div class="adv-card"><h3>Comportamiento</h3>
+      <label class="adv-check"><input id="adv-auto-greet" type="checkbox" ${c.options.autoGreet?'checked':''}>Saludo automático</label>
+      <label class="adv-check"><input id="adv-auto-farewell" type="checkbox" ${c.options.autoFarewell?'checked':''}>Despedida automática</label>
+      <label class="adv-check"><input id="adv-promos" type="checkbox" ${c.options.promosEnabled?'checked':''}>Promociones</label>
+      <div class="adv-row"><label>Volumen maestro del animatrónico</label><div style="display:flex;align-items:center;gap:6px;min-width:180px"><input id="adv-master-volume" type="range" min="0" max="1" step="0.05" value="${c.audio.masterVolume}" style="flex:1" oninput="document.getElementById('adv-master-volume-label').textContent=Math.round(this.value*100)+'%'"><span id="adv-master-volume-label" class="adv-muted">${Math.round(c.audio.masterVolume*100)}%</span></div></div>
+    </div>
+    <div class="adv-card"><h3>Carpetas de audio</h3><div class="adv-muted">Palomea las emociones que esta carpeta puede usar. Cambiar esto ya no requiere editar el HTML.</div>${pools}</div>
+    <div class="adv-card"><h3>Efectos Jack · preparados para comunicación</h3><div class="adv-muted">Todavía no hay Firebase en esta versión. Aquí defines qué podrá ejecutar cada nivel cuando conectemos el ERP.</div>${jack}</div>
+    <div class="adv-card"><h3>Respaldo de configuración</h3>
+      <div class="adv-actions"><button class="adv-btn primary" type="button" onclick="saveAdvancedConfig()">Guardar y aplicar</button><button class="adv-btn" type="button" onclick="exportAnimConfig()">💾 Exportar JSON</button><button class="adv-btn" type="button" onclick="document.getElementById('adv-config-import').click()">↩ Importar JSON</button><button class="adv-btn warn" type="button" onclick="resetAnimConfigDefaults()">Restaurar valores iniciales</button></div>
+      <input id="adv-config-import" type="file" accept="application/json,.json" style="display:none" onchange="importAnimConfigFile(event)"><div id="adv-config-status" class="adv-status"></div>
+    </div>`;
+  document.getElementById('adv-mode-force').value=c.mode.forced||'';
+  for(const [level,j] of Object.entries(c.jackEffects)){ const el=document.getElementById('adv-jack-pool-'+level); if(el)el.value=j.pool; }
+}
+
+function advStatus(msg,ok=true){ const el=document.getElementById('adv-config-status'); if(el){ el.textContent=msg; el.style.color=ok?'var(--green)':'#ff8855'; } }
+function readAdvancedConfig(){
+  const c=currentConfigSnapshot();
+  c.mode.forced=safeMode(document.getElementById('adv-mode-force')?.value||'');
+  c.mode.trollStart=document.getElementById('adv-troll-start')?.value||c.mode.trollStart;
+  c.mode.trollEnd=document.getElementById('adv-troll-end')?.value||c.mode.trollEnd;
+  c.options.autoGreet=!!document.getElementById('adv-auto-greet')?.checked;
+  c.options.autoFarewell=!!document.getElementById('adv-auto-farewell')?.checked;
+  c.options.promosEnabled=!!document.getElementById('adv-promos')?.checked;
+  c.audio.masterVolume=Number(document.getElementById('adv-master-volume')?.value ?? c.audio.masterVolume);
+  for(const k of Object.keys(c.pools)){
+    c.pools[k].enabled=!!document.getElementById('adv-pool-enabled-'+k)?.checked;
+    c.pools[k].tope=Number(document.getElementById('adv-pool-tope-'+k)?.value||0);
+    c.pools[k].priority=Number(document.getElementById('adv-pool-priority-'+k)?.value||30);
+    c.pools[k].volume=Number(document.getElementById('adv-pool-volume-'+k)?.value??1);
+    c.pools[k].emotions=selectedEmotionChecks('pool-'+k);
+  }
+  for(const level of Object.keys(c.jackEffects)){
+    c.jackEffects[level].enabled=!!document.getElementById('adv-jack-enabled-'+level)?.checked;
+    c.jackEffects[level].pool=document.getElementById('adv-jack-pool-'+level)?.value||'fx_terror';
+    c.jackEffects[level].priority=Number(document.getElementById('adv-jack-priority-'+level)?.value||60);
+    c.jackEffects[level].emotions=selectedEmotionChecks('jack-'+level);
+  }
+  return normalizeRuntimeConfig(c);
+}
+function saveAdvancedConfig(){ RUNTIME_CONFIG=readAdvancedConfig(); applyRuntimeConfig(true); advStatus('Configuración guardada y aplicada.'); renderAdvancedConfig(); }
+async function testPoolFromAdvanced(name){ try{ const temp=readAdvancedConfig(); const old=RUNTIME_CONFIG; RUNTIME_CONFIG=temp; applyRuntimeConfig(false); const ok=await tryPlayFromPool(name); if(!ok) advStatus(`No se pudo reproducir ${POOL_LABELS[name]||name}; revisa tope/archivos.`,false); else advStatus(`Prueba enviada: ${POOL_LABELS[name]||name}`); RUNTIME_CONFIG=old; applyRuntimeConfig(false); }catch(e){advStatus(e.message,false);} }
+async function testJackFromAdvanced(level){ try{ const temp=readAdvancedConfig(); const old=RUNTIME_CONFIG; RUNTIME_CONFIG=temp; applyRuntimeConfig(false); const r=await triggerJackLevel(level); advStatus(r.ok?`Prueba ${level} ejecutada`:`${level}: ${r.reason||'no ejecutado'}`,r.ok); RUNTIME_CONFIG=old; applyRuntimeConfig(false); }catch(e){advStatus(e.message,false);} }
+
+function exportAnimConfig(){
+  try{
+    const data={...currentConfigSnapshot(),exportedAt:new Date().toISOString()};
+    const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json;charset=utf-8'});
+    const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=`animatronico_config_${new Date().toISOString().slice(0,10)}.json`; document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+    advStatus('Configuración exportada.');
+  }catch(e){advStatus('No se pudo exportar: '+e.message,false);}
+}
+async function importAnimConfigFile(ev){
+  const f=ev.target.files?.[0]; if(!f)return;
+  try{ const obj=JSON.parse(await f.text()); if(obj.kind&&obj.kind!==CONFIG_KIND)throw new Error('El JSON no corresponde a esta configuración.'); RUNTIME_CONFIG=normalizeRuntimeConfig(obj); applyRuntimeConfig(true); renderAdvancedConfig(); advStatus('Configuración importada y aplicada.'); }
+  catch(e){advStatus('No se pudo importar: '+e.message,false);} finally{ev.target.value='';}
+}
+function resetAnimConfigDefaults(){ if(!confirm('¿Restaurar la configuración operativa inicial? No cambia animaciones ni archivos de audio.'))return; RUNTIME_CONFIG=normalizeRuntimeConfig(DEFAULT_RUNTIME_CONFIG); applyRuntimeConfig(true); renderAdvancedConfig(); advStatus('Valores iniciales restaurados.'); }
+
+async function triggerJackLevel(level){
+  level=String(level||'').toUpperCase(); const cfg=RUNTIME_CONFIG.jackEffects[level];
+  if(!cfg||!cfg.enabled) return {ok:false,reason:'nivel desactivado'};
+  if(S.speaking) return {ok:false,reason:'animatrónico ocupado'};
+  const played=cfg.pool?await tryPlayFromPool(cfg.pool):false;
+  if(cfg.emotions?.length) setEmotion(cfg.emotions[Math.floor(Math.random()*cfg.emotions.length)]);
+  return {ok:true,level,playedAudio:!!played,priority:cfg.priority};
+}
+
+// API única preparada para Firebase/ERP. La integración futura debe usar esta puerta.
+window.AnimatronicAPI = {
+  getState(){ return {speaking:S.speaking,faceTracking:S.faceTracking,animation:S.anim,mode:getActiveMode(),modeForced:RUNTIME_CONFIG.mode.forced||'',autoGreet:S.autoGreet,autoFarewell:S.autoFarewell,promosEnabled:S.promosEnabled,volume:S.volume,configVersion:RUNTIME_CONFIG.version}; },
+  getConfig(){ return currentConfigSnapshot(); },
+  setMode(mode){ setTrollMode(mode||''); return this.getState(); },
+  setOption(name,value){ if(name==='autoGreet')setAutoGreet(value); else if(name==='autoFarewell')setAutoFarewell(value); else if(name==='promosEnabled')setPromosEnabled(value); else if(name==='faceTracking'){ if(value&&!S.faceTracking)startFaceTracking(); if(!value&&S.faceTracking)stopFaceTracking(); } else throw new Error('Opción remota no permitida'); return this.getState(); },
+  setPoolConfig(name,patch){ if(!RUNTIME_CONFIG.pools[name])throw new Error('Carpeta desconocida'); RUNTIME_CONFIG.pools[name]=Object.assign({},RUNTIME_CONFIG.pools[name],patch||{}); applyRuntimeConfig(true); return cloneJson(RUNTIME_CONFIG.pools[name]); },
+  triggerEmotion(name){ if(!ANIMS.includes(name))throw new Error('Emoción desconocida'); setEmotion(name); return {ok:true,animation:S.anim}; },
+  triggerCategory(name){ if(!AUDIO_POOLS_CONFIG[name])throw new Error('Categoría desconocida'); return speakFromCategory(name); },
+  triggerJackLevel(level){ return triggerJackLevel(level); },
+  applyConfig(cfg){ RUNTIME_CONFIG=normalizeRuntimeConfig(cfg); applyRuntimeConfig(true); return this.getConfig(); }
 };
 
 // ── FRASES FIJAS DE MAYOR PESO (promociones), por categoría ──
@@ -821,7 +1132,7 @@ async function triggerScripted(scriptedList, poolName, stateKey) {
   const poolCfg = AUDIO_POOLS_CONFIG[poolName] || {};
 
   const scriptedWeight = list.length;
-  const poolWeight = poolCfg.tope || 0;
+  const poolWeight = poolCfg.enabled === false ? 0 : (poolCfg.tope || 0);
   const promoWeight = promos.reduce((sum, p) => sum + (p.weight || 1), 0);
   const total = scriptedWeight + poolWeight + promoWeight;
   if (total === 0) return;
@@ -1445,47 +1756,38 @@ function scheduleAuto() {
   if(!S.autoMode) return;
   const pick = ANIMS[Math.floor(Math.random()*ANIMS.length)];
   setEmotion(pick);
-  S.autoTimer = setTimeout(scheduleAuto, 10200 + Math.random()*2800);
+  S.autoTimer = setTimeout(scheduleAuto, 1200 + Math.random()*2800);
 }
 
-function toggleAutoGreet() {
-  S.autoGreet = !S.autoGreet;
-  localStorage.setItem('auto_greet', S.autoGreet ? '1' : '0');
-  document.getElementById('toggle-auto-greet').classList.toggle('on', S.autoGreet);
-}
+function toggleAutoGreet() { setAutoGreet(!S.autoGreet); }
 
-function toggleAutoFarewell() {
-  S.autoFarewell = !S.autoFarewell;
-  localStorage.setItem('auto_farewell', S.autoFarewell ? '1' : '0');
-  document.getElementById('toggle-auto-farewell').classList.toggle('on', S.autoFarewell);
-}
+function toggleAutoFarewell() { setAutoFarewell(!S.autoFarewell); }
 
-function togglePromos() {
-  S.promosEnabled = !S.promosEnabled;
-  localStorage.setItem('promos_enabled', S.promosEnabled ? '1' : '0');
-  document.getElementById('toggle-promos').classList.toggle('on', S.promosEnabled);
-}
+function togglePromos() { setPromosEnabled(!S.promosEnabled); }
 
 function getActiveMode() {
-  const forced = localStorage.getItem('troll_mode_force') || '';
+  const forced = RUNTIME_CONFIG?.mode?.forced || '';
   if (forced === 'familiar' || forced === 'troll') return forced;
-  const h = new Date().getHours();
-  return (h >= 21 || h < 6) ? 'troll' : 'familiar';
+  const start=timeToMin(RUNTIME_CONFIG?.mode?.trollStart)||0;
+  const end=timeToMin(RUNTIME_CONFIG?.mode?.trollEnd)||0;
+  const now=new Date(), cur=now.getHours()*60+now.getMinutes();
+  const troll = start===end ? false : (start>end ? (cur>=start || cur<end) : (cur>=start && cur<end));
+  return troll ? 'troll' : 'familiar';
 }
 
 function setTrollMode(val) {
-  localStorage.setItem('troll_mode_force', val || '');
-  updateModeStatus();
+  RUNTIME_CONFIG.mode.forced=safeMode(val||'');
+  applyRuntimeConfig(true);
 }
 
 function updateModeStatus() {
-  const forced = localStorage.getItem('troll_mode_force') || '';
+  const forced = RUNTIME_CONFIG?.mode?.forced || '';
   const active = getActiveMode();
   const el = document.getElementById('mode-status');
   if (!el) return;
   el.textContent = forced
     ? `Forzado: ${active === 'troll' ? 'troll 😈' : 'familiar 🙂'}`
-    : `Automático · ahora mismo: ${active === 'troll' ? 'troll 😈' : 'familiar 🙂'} (según hora)`;
+    : `Automático · ${RUNTIME_CONFIG.mode.trollStart}–${RUNTIME_CONFIG.mode.trollEnd} troll · ahora: ${active === 'troll' ? 'troll 😈' : 'familiar 🙂'}`;
 }
 
 function toggleHalloween() {
@@ -1521,16 +1823,15 @@ window.reaccionar = function(nombreEmocion) {
 
 // precargar preferencias guardadas
 (function initUI() {
+  applyRuntimeConfig(false);
   document.getElementById('toggle-auto-greet').classList.toggle('on', S.autoGreet);
   document.getElementById('toggle-auto-farewell').classList.toggle('on', S.autoFarewell);
   document.getElementById('toggle-promos').classList.toggle('on', S.promosEnabled);
-  document.getElementById('troll-mode-select').value = localStorage.getItem('troll_mode_force') || '';
+  document.getElementById('troll-mode-select').value = RUNTIME_CONFIG.mode.forced || '';
   updateModeStatus();
 })();
 
-function setVolume(v) {
-  S.volume = parseFloat(v);
-}
+function setVolume(v) { setMasterVolume(v); }
 
 // ── SPEECH SYNTHESIS ──
 function speakPhrase(text) {
@@ -1547,18 +1848,18 @@ function speakPhrase(text) {
   window.speechSynthesis.speak(utt);
 }
 
-function playAudioEl(audio) {
+function playAudioEl(audio, volumeMultiplier=1) {
   const ind = document.getElementById('voice-indicator');
-  audio.volume = S.volume;
+  audio.volume = Math.max(0,Math.min(1,S.volume * clampNum(volumeMultiplier,0,1,1)));
   ind.classList.add('active'); S.speaking = true;
   audio.onended = () => { ind.classList.remove('active'); S.speaking = false; };
   audio.play().catch(() => { ind.classList.remove('active'); S.speaking = false; });
 }
 
-function tryPlayLocalFile(src) {
+function tryPlayLocalFile(src, volumeMultiplier=1) {
   return new Promise(resolve => {
     const audio = new Audio(src);
-    audio.oncanplaythrough = () => { playAudioEl(audio); resolve(true); };
+    audio.oncanplaythrough = () => { playAudioEl(audio,volumeMultiplier); resolve(true); };
     audio.onerror = () => resolve(false);
     audio.load();
   });
@@ -1599,10 +1900,10 @@ function pickPoolEmotion(cfg, n) {
 // y aplica la emoción que le corresponda a ese número
 async function tryPlayFromPool(poolName, maxAttempts = 5) {
   const cfg = AUDIO_POOLS_CONFIG[poolName];
-  if (!cfg || !cfg.tope) return false;
+  if (!cfg || cfg.enabled === false || !cfg.tope) return false;
   const order = shuffleRange(1, cfg.tope).slice(0, maxAttempts);
   for (const n of order) {
-    const ok = await tryPlayLocalFile(`${cfg.folder}/${n}.mp3`);
+    const ok = await tryPlayLocalFile(`${cfg.folder}/${n}.mp3`, cfg.volume ?? 1);
     if (ok) {
       const emo = pickPoolEmotion(cfg, n);
       if (emo) setEmotion(emo);
@@ -1617,7 +1918,7 @@ async function speakFromCategory(categoria, emocionSiFalla) {
   const cfg = AUDIO_POOLS_CONFIG[categoria] || { tope: 0 };
   const promos = (S.promosEnabled ?? true) ? (CATEGORY_PROMOS[categoria] || []) : [];
   const promoWeight = promos.reduce((sum, p) => sum + (p.weight || 1), 0);
-  const poolWeight = cfg.tope || 0;
+  const poolWeight = cfg.enabled === false ? 0 : (cfg.tope || 0);
   const total = promoWeight + poolWeight;
   if (total === 0) return;
 
