@@ -864,6 +864,16 @@ function renderAdvancedConfig(){
       <div class="adv-row"><label>Nivel</label><select id="adv-jack-select" onchange="changeAdvancedJack(this.value)">${jackSelector}</select></div>
       <div id="adv-jack-editor" class="adv-pool adv-level"></div></div>
     </details>
+    <details class="adv-card"><summary><b>Conexión remota · Firebase</b></summary>
+      <div style="margin-top:10px">
+        <div class="adv-row"><label>Estado</label><b id="adv-remote-connection" style="color:#ffb35c">INICIANDO…</b></div>
+        <div class="adv-row"><label>Dispositivo</label><span id="adv-remote-device" class="adv-muted">A2</span></div>
+        <div class="adv-row"><label>UID Firebase</label><span id="adv-remote-uid" class="adv-muted" style="word-break:break-all">—</span></div>
+        <div class="adv-row"><label>Último comando</label><span id="adv-remote-last" class="adv-muted">—</span></div>
+        <div class="adv-row"><label>Último error</label><span id="adv-remote-error" class="adv-muted">—</span></div>
+        <div class="adv-muted" style="margin-top:8px">Esta capa sólo recibe órdenes y publica estado. Si Firebase falla, ojos, cámara, audio y funcionamiento local continúan normales.</div>
+      </div>
+    </details>
     <details class="adv-card"><summary><b>Respaldo de configuración</b></summary>
       <div style="margin-top:10px" class="adv-actions"><button class="adv-btn primary" type="button" onclick="saveAdvancedConfig()">Guardar y aplicar</button><button class="adv-btn" type="button" onclick="exportAnimConfig()">💾 Exportar JSON</button><button class="adv-btn" type="button" onclick="document.getElementById('adv-config-import').click()">↩ Importar JSON</button><button class="adv-btn warn" type="button" onclick="resetAnimConfigDefaults()">Restaurar valores iniciales</button></div>
       <input id="adv-config-import" type="file" accept="application/json,.json" style="display:none" onchange="importAnimConfigFile(event)"><div id="adv-config-status" class="adv-status"></div>
@@ -871,6 +881,7 @@ function renderAdvancedConfig(){
   document.getElementById('adv-mode-force').value=c.mode.forced||'';
   renderPoolEditor();
   renderJackEditor();
+  if(window.RemoteBridgeUI?.refresh) window.RemoteBridgeUI.refresh();
 }
 
 function openAdvancedConfig(){
@@ -2032,6 +2043,224 @@ const manifest = {
 };
 const blob = new Blob([JSON.stringify(manifest)], {type:'application/json'});
 document.getElementById('manifest-link').href = URL.createObjectURL(blob);
+
+// ── PUENTE REMOTO: estado visual solamente. La lógica Firebase vive en un módulo aparte. ──
+window.__REMOTE_BRIDGE_STATE = {
+  deviceId: localStorage.getItem('animatronic_device_id') || 'A2',
+  connected: false,
+  authenticated: false,
+  uid: '',
+  lastCommand: '',
+  lastError: '',
+  lastSeenAt: 0
+};
+localStorage.setItem('animatronic_device_id', window.__REMOTE_BRIDGE_STATE.deviceId);
+
+window.RemoteBridgeUI = {
+  patch(patch){
+    Object.assign(window.__REMOTE_BRIDGE_STATE, patch||{});
+    this.refresh();
+  },
+  refresh(){
+    const st=window.__REMOTE_BRIDGE_STATE||{};
+    const c=document.getElementById('adv-remote-connection');
+    const d=document.getElementById('adv-remote-device');
+    const u=document.getElementById('adv-remote-uid');
+    const l=document.getElementById('adv-remote-last');
+    const e=document.getElementById('adv-remote-error');
+    if(c){
+      c.textContent=st.connected&&st.authenticated?'CONECTADO':'DESCONECTADO';
+      c.style.color=st.connected&&st.authenticated?'var(--green)':'#ffb35c';
+    }
+    if(d)d.textContent=st.deviceId||'A2';
+    if(u)u.textContent=st.uid||'—';
+    if(l)l.textContent=st.lastCommand||'—';
+    if(e)e.textContent=st.lastError||'—';
+  }
+};
+
+// Snapshot de sólo lectura para la capa remota. No modifica face tracking ni animaciones.
+window.getAnimatronicRemoteState = function(){
+  const base = window.AnimatronicAPI?.getState ? window.AnimatronicAPI.getState() : {};
+  return {
+    ...base,
+    deviceId: window.__REMOTE_BRIDGE_STATE?.deviceId || 'A2',
+    facePresent: !!(S.facePresentStreak>0 && S.faceAbsentStreak===0),
+    halloween: !!S.halloween,
+    online: true
+  };
+};
+</script>
+
+<script type="module">
+// ──────────────────────────────────────────────────────────────
+// FIREBASE RTDB BRIDGE — sólo comunicación. No toca el renderer.
+// ──────────────────────────────────────────────────────────────
+import { initializeApp } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-app.js";
+import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-auth.js";
+import {
+  getDatabase, ref, set, update, onValue, onChildAdded,
+  onDisconnect, serverTimestamp
+} from "https://www.gstatic.com/firebasejs/12.19.0/firebase-database.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyBkw1MxkhJYnqxfVxq77aY1_x0yIHHdOy4",
+  authDomain: "halloween-2026-be987.firebaseapp.com",
+  databaseURL: "https://halloween-2026-be987-default-rtdb.firebaseio.com/",
+  projectId: "halloween-2026-be987",
+  storageBucket: "halloween-2026-be987.firebasestorage.app",
+  messagingSenderId: "286510623769",
+  appId: "1:286510623769:web:5fe34a3ad2fffa8a374e88"
+};
+
+const ROOT = 'halloween2026/animatronic';
+const DEVICE_ID = localStorage.getItem('animatronic_device_id') || 'A2';
+const MAX_COMMAND_AGE_MS = 30000;
+const PROCESSED_KEY = 'animatronic_processed_remote_commands_v1';
+const MAX_PROCESSED = 100;
+
+function uiPatch(p){ window.RemoteBridgeUI?.patch?.(p); }
+function now(){ return Date.now(); }
+function safeObj(v){ return v && typeof v==='object' ? v : {}; }
+function loadProcessed(){
+  try { return new Set(JSON.parse(localStorage.getItem(PROCESSED_KEY)||'[]')); }
+  catch(_) { return new Set(); }
+}
+const processed = loadProcessed();
+function rememberProcessed(id){
+  if(!id) return;
+  processed.add(String(id));
+  const arr=[...processed].slice(-MAX_PROCESSED);
+  processed.clear(); arr.forEach(x=>processed.add(x));
+  localStorage.setItem(PROCESSED_KEY,JSON.stringify(arr));
+}
+function commandIsFresh(cmd){
+  const t=Number(cmd?.createdAt||0), exp=Number(cmd?.expiresAt||0), n=now();
+  if(exp && n>exp) return false;
+  if(t && n-t>MAX_COMMAND_AGE_MS) return false;
+  return true;
+}
+
+async function executeCommand(id, cmd){
+  const type=String(cmd?.type||'').trim();
+  const payload=safeObj(cmd?.payload);
+  if(!type) throw new Error('Comando sin tipo');
+  if(processed.has(id)) return {status:'duplicate'};
+  if(!commandIsFresh(cmd)) { rememberProcessed(id); return {status:'expired'}; }
+
+  let result=null;
+  switch(type){
+    case 'ping':
+      result={pong:true};
+      break;
+    case 'emotion':
+      result=window.AnimatronicAPI.triggerEmotion(String(payload.name||''));
+      break;
+    case 'mode':
+      result=window.AnimatronicAPI.setMode(String(payload.mode||''));
+      break;
+    case 'option':
+      result=window.AnimatronicAPI.setOption(String(payload.name||''),payload.value);
+      break;
+    case 'category':
+      if(window.getAnimatronicRemoteState().speaking) return {status:'busy',reason:'speaking'};
+      result=await window.AnimatronicAPI.triggerCategory(String(payload.name||''));
+      break;
+    case 'jack_level':
+      result=await window.AnimatronicAPI.triggerJackLevel(String(payload.level||''));
+      break;
+    case 'apply_config':
+      result=window.AnimatronicAPI.applyConfig(payload.config||{});
+      break;
+    default:
+      throw new Error('Comando remoto no permitido: '+type);
+  }
+  rememberProcessed(id);
+  return {status:'ok',result};
+}
+
+try {
+  const app=initializeApp(firebaseConfig);
+  const auth=getAuth(app);
+  const db=getDatabase(app);
+
+  const stateRef=ref(db,`${ROOT}/devices/${DEVICE_ID}/state`);
+  const ackBase=`${ROOT}/acks/${DEVICE_ID}`;
+  const commandRef=ref(db,`${ROOT}/commands/${DEVICE_ID}`);
+  const allCommandRef=ref(db,`${ROOT}/commands/all`);
+  const connectedRef=ref(db,'.info/connected');
+
+  onValue(connectedRef, async snap=>{
+    const connected=snap.val()===true;
+    uiPatch({connected});
+    if(connected){
+      try{
+        await onDisconnect(stateRef).update({online:false,lastSeenAt:serverTimestamp()});
+      }catch(e){ console.warn('onDisconnect:',e); }
+    }
+  });
+
+  onAuthStateChanged(auth,user=>{
+    uiPatch({authenticated:!!user,uid:user?.uid||''});
+  });
+
+  await signInAnonymously(auth);
+
+  async function ack(id,body){
+    try{
+      await set(ref(db,`${ackBase}/${id}`),{
+        commandId:id,
+        deviceId:DEVICE_ID,
+        at:serverTimestamp(),
+        ...body
+      });
+    }catch(e){ console.warn('ACK:',e); }
+  }
+
+  async function handleCommandSnapshot(snap){
+    const id=snap.key, cmd=snap.val()||{};
+    if(!id || processed.has(id)) return;
+    const target=String(cmd.target||DEVICE_ID);
+    if(target!==DEVICE_ID && target!=='all') return;
+    try{
+      const out=await executeCommand(id,cmd);
+      uiPatch({lastCommand:`${cmd.type||'?'} · ${out.status||'ok'}`,lastError:''});
+      await ack(id,{status:out.status||'ok',type:cmd.type||'',detail:out.result||out.reason||null});
+    }catch(e){
+      uiPatch({lastCommand:`${cmd.type||'?'} · ERROR`,lastError:e.message||String(e)});
+      rememberProcessed(id);
+      await ack(id,{status:'error',type:cmd.type||'',message:e.message||String(e)});
+    }
+    publishState(true);
+  }
+
+  onChildAdded(commandRef,handleCommandSnapshot);
+  onChildAdded(allCommandRef,handleCommandSnapshot);
+
+  let lastStateSig='';
+  let lastPublishAt=0;
+  async function publishState(force=false){
+    try{
+      const st=window.getAnimatronicRemoteState();
+      const sig=JSON.stringify(st);
+      const n=now();
+      if(!force && sig===lastStateSig && n-lastPublishAt<10000) return;
+      lastStateSig=sig; lastPublishAt=n;
+      await update(stateRef,{...st,uid:auth.currentUser?.uid||'',updatedAt:serverTimestamp(),clientNow:n});
+    }catch(e){
+      uiPatch({lastError:'Estado: '+(e.message||String(e))});
+    }
+  }
+
+  // Reacciona rápido a speaking/facePresent, pero sólo escribe si algo cambió.
+  setInterval(()=>publishState(false),350);
+  await publishState(true);
+  uiPatch({lastError:''});
+  window.AnimatronicRemote={publishState,deviceId:DEVICE_ID};
+}catch(e){
+  console.error('Firebase bridge:',e);
+  uiPatch({connected:false,authenticated:false,lastError:e.message||String(e)});
+}
 </script>
 </body>
 </html>
