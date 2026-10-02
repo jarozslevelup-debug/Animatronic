@@ -605,6 +605,7 @@ const AUDIO_POOLS_CONFIG = {
   situ_venta:    { folder: 'audio/situ_venta',    tope: 0, emotions: ['curioso','evil','glitch'] },
   situ_album:    { folder: 'audio/situ_album',    tope: 0, emotions: ['happy','curioso','siniestro','travieso'] },
   situ_chiste:   { folder: 'audio/situ_chiste',   tope: 0, emotions: ['riendo','travieso','curioso','evil'] },
+  jack:          { folder: 'audio/jack',          tope: 0, emotions: ['happy','curioso','evil','possessed','siniestro','furia','glitch'] },
   fx_terror:     { folder: 'audio/fx_terror',     tope: 0, emotions: ['evil','glitch','possessed','estatico','membrana','furia'] },
   greet_familiar:     { folder: 'audio/greet_familiar',     tope: 0, emotions: ['happy','curioso','suspicious','travieso'] },
   greet_troll:        { folder: 'audio/greet_troll',        tope: 0, emotions: ['evil','riendo','possessed','glitch','siniestro'] },
@@ -619,7 +620,7 @@ const CONFIG_STORAGE_KEY = 'animatronic_config_v2';
 const CONFIG_KIND = 'ANIMATRONIC_CONFIG_V2';
 const POOL_LABELS = {
   situ_mascaras:'Máscaras', situ_indeciso:'Indeciso', situ_fiado:'Fiado', situ_regateo:'Regateo', situ_venta:'Venta',
-  situ_album:'Álbum', situ_chiste:'Chiste / comentario',
+  situ_album:'Álbum', situ_chiste:'Chiste / comentario', jack:'Jack · niveles',
   fx_terror:'Efectos de terror', greet_familiar:'Saludo familiar', greet_troll:'Saludo troll',
   despedida_familiar:'Despedida familiar', despedida_troll:'Despedida troll'
 };
@@ -632,7 +633,7 @@ function safeMode(v){ return v==='familiar'||v==='troll'?v:''; }
 
 const DEFAULT_RUNTIME_CONFIG = {
   kind: CONFIG_KIND,
-  version: 4,
+  version: 5,
   mode: {
     forced: safeMode(localStorage.getItem('troll_mode_force') || ''),
     trollStart: '21:00',
@@ -647,7 +648,10 @@ const DEFAULT_RUNTIME_CONFIG = {
     autoInterVisit: true,
     interMinSec: 20,
     interMaxSec: 35,
-    farewellDelaySec: 1.6
+    farewellDelaySec: 1.6,
+    maxInterventionsPerVisit: 2,
+    contextDurationSec: 45,
+    contextBoost: 5
   },
   audio: { masterVolume: S.volume },
   browserSpeech: {
@@ -662,14 +666,21 @@ const DEFAULT_RUNTIME_CONFIG = {
     numberEmotions: cloneJson(v.numberEmotions||{}),
     volume: 1,
     priority: 30,
+    weight: (k==='situ_album'?5:(k==='situ_chiste'?2:1)),
+    recentAvoid: 2,
     // Sólo las situaciones marcadas pueden entrar solas durante una visita.
     autoVisit: (k==='situ_album' || k==='situ_chiste')
   }])),
   jackEffects: {
-    N1:{enabled:true,pool:'fx_terror',emotions:['happy','curioso'],priority:60},
-    N2:{enabled:true,pool:'fx_terror',emotions:['evil','suspicious','glitch'],priority:70},
-    N3:{enabled:true,pool:'fx_terror',emotions:['evil','possessed','siniestro'],priority:80},
-    N4:{enabled:true,pool:'fx_terror',emotions:['furia','possessed','glitch','estatico'],priority:90}
+    N1:{enabled:true,pool:'jack',emotions:['happy','curioso'],priority:60},
+    N2:{enabled:true,pool:'jack',emotions:['evil','suspicious','glitch'],priority:70},
+    N3:{enabled:true,pool:'jack',emotions:['evil','possessed','siniestro'],priority:80},
+    N4:{enabled:true,pool:'jack',emotions:['furia','possessed','glitch','estatico'],priority:90}
+  },
+  jackRouting: {
+    // Ejemplo: "3":["N2","N3"] hace que jack/3.mp3 pueda salir en N2 o N3.
+    assignments: {},
+    fallbackAnyWhenUnassigned: true
   }
 };
 
@@ -681,7 +692,8 @@ function mergeRuntimeConfig(base, incoming){
   if(src.browserSpeech) Object.assign(out.browserSpeech,src.browserSpeech);
   if(src.pools) for(const [k,v] of Object.entries(src.pools)) if(out.pools[k]&&v&&typeof v==='object') Object.assign(out.pools[k],v);
   if(src.jackEffects) for(const [k,v] of Object.entries(src.jackEffects)) if(out.jackEffects[k]&&v&&typeof v==='object') Object.assign(out.jackEffects[k],v);
-  out.kind=CONFIG_KIND; out.version=4;
+  if(src.jackRouting) Object.assign(out.jackRouting,src.jackRouting);
+  out.kind=CONFIG_KIND; out.version=5;
   return out;
 }
 
@@ -698,6 +710,9 @@ function normalizeRuntimeConfig(cfg){
   out.options.interMaxSec=clampNum(out.options.interMaxSec,3,600,35);
   if(out.options.interMaxSec < out.options.interMinSec) out.options.interMaxSec=out.options.interMinSec;
   out.options.farewellDelaySec=clampNum(out.options.farewellDelaySec,0.5,20,1.6);
+  out.options.maxInterventionsPerVisit=Math.max(0,Math.min(20,Math.floor(Number.isFinite(Number(out.options.maxInterventionsPerVisit))?Number(out.options.maxInterventionsPerVisit):2)));
+  out.options.contextDurationSec=clampNum(out.options.contextDurationSec,5,600,45);
+  out.options.contextBoost=clampNum(out.options.contextBoost,1,50,5);
   out.audio.masterVolume=clampNum(out.audio.masterVolume,0,1,0.7);
   out.browserSpeech = (out.browserSpeech && typeof out.browserSpeech==='object') ? out.browserSpeech : cloneJson(DEFAULT_RUNTIME_CONFIG.browserSpeech);
   out.browserSpeech.enabled=!!out.browserSpeech.enabled;
@@ -710,16 +725,24 @@ function normalizeRuntimeConfig(cfg){
     p.tope=Math.max(0,Math.floor(Number(p.tope)||0));
     p.volume=clampNum(p.volume,0,1,1);
     p.priority=Math.max(0,Math.min(100,Math.floor(Number(p.priority)||30)));
+    p.weight=clampNum(p.weight,0,50,1);
+    p.recentAvoid=Math.max(0,Math.min(20,Math.floor(Number(p.recentAvoid)||0)));
     p.autoVisit=!!p.autoVisit;
     p.emotions=[...new Set((p.emotions||[]).filter(x=>ANIMS.includes(x)))];
     p.numberEmotions=(p.numberEmotions&&typeof p.numberEmotions==='object')?p.numberEmotions:{};
   }
   for(const [k,j] of Object.entries(out.jackEffects)){
     j.enabled=j.enabled!==false;
-    if(!AUDIO_POOLS_CONFIG[j.pool]) j.pool='fx_terror';
+    j.pool='jack';
     j.priority=Math.max(0,Math.min(100,Math.floor(Number(j.priority)||60)));
     j.emotions=[...new Set((j.emotions||[]).filter(x=>ANIMS.includes(x)))];
   }
+  out.jackRouting=(out.jackRouting&&typeof out.jackRouting==='object')?out.jackRouting:{assignments:{},fallbackAnyWhenUnassigned:true};
+  out.jackRouting.assignments=(out.jackRouting.assignments&&typeof out.jackRouting.assignments==='object')?out.jackRouting.assignments:{};
+  for(const [n,levels] of Object.entries(out.jackRouting.assignments)){
+    out.jackRouting.assignments[n]=[...new Set((Array.isArray(levels)?levels:[]).map(x=>String(x).toUpperCase()).filter(x=>['N1','N2','N3','N4'].includes(x)))];
+  }
+  out.jackRouting.fallbackAnyWhenUnassigned=out.jackRouting.fallbackAnyWhenUnassigned!==false;
   return out;
 }
 
@@ -755,6 +778,8 @@ function applyRuntimeConfig(persist=true){
     AUDIO_POOLS_CONFIG[k].numberEmotions=cloneJson(cfg.numberEmotions||{});
     AUDIO_POOLS_CONFIG[k].volume=cfg.volume;
     AUDIO_POOLS_CONFIG[k].priority=cfg.priority;
+    AUDIO_POOLS_CONFIG[k].weight=cfg.weight;
+    AUDIO_POOLS_CONFIG[k].recentAvoid=cfg.recentAvoid;
     AUDIO_POOLS_CONFIG[k].autoVisit=cfg.autoVisit;
   }
   if(persist) saveRuntimeConfig();
@@ -786,12 +811,36 @@ function escAttr(v){ return String(v??'').replace(/&/g,'&amp;').replace(/"/g,'&q
 function ensureAdvancedOverlay(){
   if(document.getElementById('adv-config-overlay')) return;
   const d=document.createElement('div'); d.id='adv-config-overlay';
-  d.innerHTML=`<div class="adv-wrap"><div class="adv-head"><div class="adv-title">☠ CONFIGURACIÓN V2.3</div><button class="adv-btn" type="button" onclick="closeAdvancedConfig()">Cerrar</button></div><div id="adv-config-body"></div></div>`;
+  d.innerHTML=`<div class="adv-wrap"><div class="adv-head"><div class="adv-title">☠ CONFIGURACIÓN V2.4</div><button class="adv-btn" type="button" onclick="closeAdvancedConfig()">Cerrar</button></div><div id="adv-config-body"></div></div>`;
   document.body.appendChild(d);
 }
 let ADV_DRAFT = null;
 let ADV_POOL_SELECTED = 'situ_venta';
 let ADV_JACK_SELECTED = 'N1';
+
+function renderPoolAudioMap(){
+  const host=document.getElementById('adv-pool-audio-map'); if(!host||!ADV_DRAFT)return;
+  const p=ADV_DRAFT.pools[ADV_POOL_SELECTED]; const top=Math.max(0,Number(p?.tope)||0);
+  if(!top){ host.innerHTML='<div class="adv-muted">Sin audios numerados todavía.</div>'; return; }
+  const rows=[];
+  for(let n=1;n<=top;n++){
+    const fixed=p.numberEmotions?.[String(n)]||'';
+    const opts=['<option value="">Automática</option>'].concat(ANIMS.map(a=>`<option value="${a}" ${fixed===a?'selected':''}>${a}</option>`)).join('');
+    rows.push(`<div class="adv-row" style="border-top:1px solid rgba(255,255,255,.08);padding:6px 0"><b style="min-width:54px">${n}.mp3</b><select data-pool-emo="${n}" style="min-width:150px">${opts}</select></div>`);
+  }
+  host.innerHTML=rows.join('');
+}
+function capturePoolAudioEmotions(){
+  if(!ADV_DRAFT?.pools?.[ADV_POOL_SELECTED])return;
+  const p=ADV_DRAFT.pools[ADV_POOL_SELECTED]; p.numberEmotions=p.numberEmotions||{};
+  for(const el of document.querySelectorAll('select[data-pool-emo]')){
+    const n=String(el.dataset.poolEmo),v=el.value; if(v)p.numberEmotions[n]=v; else delete p.numberEmotions[n];
+  }
+}
+function renderPoolAudioMapFromTop(){
+  if(!ADV_DRAFT?.pools?.[ADV_POOL_SELECTED])return;
+  capturePoolAudioEmotions(); ADV_DRAFT.pools[ADV_POOL_SELECTED].tope=Math.max(0,Math.floor(Number(document.getElementById('adv-pool-tope')?.value||0))); renderPoolAudioMap();
+}
 
 function renderPoolEditor(){
   const host=document.getElementById('adv-pool-editor'); if(!host||!ADV_DRAFT)return;
@@ -802,22 +851,29 @@ function renderPoolEditor(){
     <div class="adv-row"><div><div class="adv-pool-name">${POOL_LABELS[k]||k}</div><div class="adv-muted">${escAttr(AUDIO_POOLS_CONFIG[k]?.folder||'')}</div></div><label class="adv-check"><input id="adv-pool-enabled" type="checkbox" ${p.enabled?'checked':''}>Usar carpeta</label></div>
     <label class="adv-check"><input id="adv-pool-auto-visit" type="checkbox" ${p.autoVisit?'checked':''}>Puede salir automáticamente a media visita</label>
     <div class="adv-grid2">
-      <div class="adv-row"><label>Audios numerados / tope</label><input id="adv-pool-tope" type="number" min="0" step="1" value="${p.tope}"></div>
-      <div class="adv-row"><label>Prioridad futura</label><input id="adv-pool-priority" type="number" min="0" max="100" step="1" value="${p.priority}"></div>
+      <div class="adv-row"><label>Audios numerados / tope</label><input id="adv-pool-tope" type="number" min="0" step="1" value="${p.tope}" onchange="renderPoolAudioMapFromTop()"></div>
+      <div class="adv-row"><label>Prioridad</label><input id="adv-pool-priority" type="number" min="0" max="100" step="1" value="${p.priority}"></div>
+      <div class="adv-row"><label>Peso automático</label><input id="adv-pool-weight" type="number" min="0" max="50" step="0.5" value="${p.weight??1}"></div>
+      <div class="adv-row"><label>Evitar últimos audios</label><input id="adv-pool-recent" type="number" min="0" max="20" step="1" value="${p.recentAvoid??2}"></div>
     </div>
     <div class="adv-row"><label>Volumen de carpeta</label><div style="display:flex;align-items:center;gap:6px;min-width:180px"><input id="adv-pool-volume" type="range" min="0" max="1" step="0.05" value="${p.volume}" style="flex:1" oninput="document.getElementById('adv-pool-volume-label').textContent=Math.round(this.value*100)+'%'"><span id="adv-pool-volume-label" class="adv-muted">${Math.round(p.volume*100)}%</span></div></div>
     <div class="adv-muted">Emociones permitidas para esta situación</div>
     <div class="adv-emotions">${renderEmotionChecks(p.emotions,'pool-current')}</div>
+    <div class="adv-pool-name" style="margin-top:10px">Expresión por archivo</div><div class="adv-muted">Automática usa cualquiera de las emociones permitidas de arriba.</div><div id="adv-pool-audio-map"></div>
     <div class="adv-actions"><button class="adv-btn" type="button" onclick="testPoolFromAdvanced()">▶ Probar situación</button></div>`;
+  renderPoolAudioMap();
 }
 
 function capturePoolEditor(){
   if(!ADV_DRAFT||!ADV_DRAFT.pools[ADV_POOL_SELECTED]||!document.getElementById('adv-pool-enabled'))return;
   const p=ADV_DRAFT.pools[ADV_POOL_SELECTED];
+  capturePoolAudioEmotions();
   p.enabled=!!document.getElementById('adv-pool-enabled').checked;
   p.autoVisit=!!document.getElementById('adv-pool-auto-visit')?.checked;
   p.tope=Number(document.getElementById('adv-pool-tope')?.value||0);
   p.priority=Number(document.getElementById('adv-pool-priority')?.value||30);
+  p.weight=Number(document.getElementById('adv-pool-weight')?.value??1);
+  p.recentAvoid=Number(document.getElementById('adv-pool-recent')?.value??2);
   p.volume=Number(document.getElementById('adv-pool-volume')?.value??1);
   p.emotions=selectedEmotionChecks('pool-current');
 }
@@ -828,27 +884,60 @@ function changeAdvancedPool(name){
   renderPoolEditor();
 }
 
+function renderJackAudioMap(){
+  const host=document.getElementById('adv-jack-map'); if(!host||!ADV_DRAFT)return;
+  const jp=ADV_DRAFT.pools.jack;
+  const top=Math.max(0,Number(jp?.tope)||0);
+  if(!top){ host.innerHTML='<div class="adv-muted">Pon primero el tope de la carpeta audio/jack. Ejemplo: si existen 1.mp3…8.mp3, usa tope 8.</div>'; return; }
+  const rows=[];
+  for(let n=1;n<=top;n++){
+    const levels=ADV_DRAFT.jackRouting?.assignments?.[String(n)]||[];
+    const fixed=jp.numberEmotions?.[String(n)]||'';
+    const opts=['<option value="">Automática</option>'].concat(ANIMS.map(a=>`<option value="${a}" ${fixed===a?'selected':''}>${a}</option>`)).join('');
+    rows.push(`<div class="adv-row" style="border-top:1px solid rgba(255,255,255,.08);padding:7px 0;align-items:center"><b style="min-width:54px">${n}.mp3</b><span style="display:flex;gap:6px;flex-wrap:wrap">${['N1','N2','N3','N4'].map(l=>`<label class="adv-check"><input type="checkbox" data-jack-audio="${n}" value="${l}" ${levels.includes(l)?'checked':''}>${l}</label>`).join('')}</span><select data-jack-emo="${n}" style="min-width:120px">${opts}</select></div>`);
+  }
+  host.innerHTML=rows.join('');
+}
+
 function renderJackEditor(){
   const host=document.getElementById('adv-jack-editor'); if(!host||!ADV_DRAFT)return;
   const level=ADV_JACK_SELECTED in ADV_DRAFT.jackEffects?ADV_JACK_SELECTED:Object.keys(ADV_DRAFT.jackEffects)[0];
   ADV_JACK_SELECTED=level;
   const j=ADV_DRAFT.jackEffects[level];
-  const poolOptions=Object.keys(AUDIO_POOLS_CONFIG).map(k=>`<option value="${k}" ${j.pool===k?'selected':''}>${POOL_LABELS[k]||k}</option>`).join('');
   host.innerHTML=`
     <div class="adv-row"><div class="adv-pool-name">${JACK_LEVEL_LABELS[level]||level}</div><label class="adv-check"><input id="adv-jack-enabled" type="checkbox" ${j.enabled?'checked':''}>Activo</label></div>
-    <div class="adv-grid2"><div class="adv-row"><label>Audio / carpeta</label><select id="adv-jack-pool">${poolOptions}</select></div><div class="adv-row"><label>Prioridad</label><input id="adv-jack-priority" type="number" min="0" max="100" value="${j.priority}"></div></div>
-    <div class="adv-muted">Emociones posibles al llegar a este nivel</div>
+    <div class="adv-row"><label>Prioridad</label><input id="adv-jack-priority" type="number" min="0" max="100" value="${j.priority}"></div>
+    <div class="adv-muted">Si el audio elegido no tiene expresión fija, usa una de estas:</div>
     <div class="adv-emotions">${renderEmotionChecks(j.emotions,'jack-current')}</div>
     <div class="adv-actions"><button class="adv-btn" type="button" onclick="testJackFromAdvanced()">▶ Probar ${level}</button></div>`;
+  renderJackAudioMap();
 }
-
 function captureJackEditor(){
   if(!ADV_DRAFT||!ADV_DRAFT.jackEffects[ADV_JACK_SELECTED]||!document.getElementById('adv-jack-enabled'))return;
   const j=ADV_DRAFT.jackEffects[ADV_JACK_SELECTED];
   j.enabled=!!document.getElementById('adv-jack-enabled').checked;
-  j.pool=document.getElementById('adv-jack-pool')?.value||'fx_terror';
+  j.pool='jack';
   j.priority=Number(document.getElementById('adv-jack-priority')?.value||60);
   j.emotions=selectedEmotionChecks('jack-current');
+  if(!ADV_DRAFT.jackRouting) ADV_DRAFT.jackRouting={assignments:{},fallbackAnyWhenUnassigned:true};
+  ADV_DRAFT.jackRouting.assignments={};
+  for(const el of document.querySelectorAll('input[data-jack-audio]')){
+    if(!el.checked) continue;
+    const n=String(el.dataset.jackAudio); (ADV_DRAFT.jackRouting.assignments[n] ||= []).push(el.value);
+  }
+  const jp=ADV_DRAFT.pools.jack;
+  jp.numberEmotions=jp.numberEmotions||{};
+  for(const el of document.querySelectorAll('select[data-jack-emo]')){
+    const n=String(el.dataset.jackEmo), v=el.value;
+    if(v) jp.numberEmotions[n]=v; else delete jp.numberEmotions[n];
+  }
+}
+
+function captureJackTopAndRefresh(){
+  if(!ADV_DRAFT)return;
+  captureJackEditor();
+  ADV_DRAFT.pools.jack.tope=Math.max(0,Math.floor(Number(document.getElementById('adv-jack-tope')?.value||0)));
+  renderJackEditor();
 }
 
 function changeAdvancedJack(level){
@@ -880,7 +969,9 @@ function renderAdvancedConfig(){
         <div class="adv-row"><label>Inter máximo (s)</label><input id="adv-inter-max" type="number" min="3" max="600" step="1" value="${c.options.interMaxSec}"></div>
       </div>
       <div class="adv-row"><label>Despedir tras ausencia (s)</label><input id="adv-farewell-delay" type="number" min="0.5" max="20" step="0.1" value="${c.options.farewellDelaySec}"></div>
-      <div class="adv-muted">La bienvenida conserva el umbral actual probado (~0.18 s). El inter elige al azar entre las situaciones marcadas para uso automático.</div>
+      <div class="adv-grid2"><div class="adv-row"><label>Máx. intervenciones / visita</label><input id="adv-max-interventions" type="number" min="0" max="20" step="1" value="${c.options.maxInterventionsPerVisit}"></div><div class="adv-row"><label>Contexto manual dura (s)</label><input id="adv-context-duration" type="number" min="5" max="600" step="1" value="${c.options.contextDurationSec}"></div></div>
+      <div class="adv-row"><label>Fuerza del contexto</label><input id="adv-context-boost" type="number" min="1" max="50" step="0.5" value="${c.options.contextBoost}"></div>
+      <div class="adv-muted">Peso automático = probabilidad relativa de esa situación. Prioridad = qué tan importante es frente a otros eventos. El contexto manual aumenta temporalmente el peso de una situación.</div>
       <div class="adv-row"><label>Volumen maestro</label><div style="display:flex;align-items:center;gap:6px;min-width:180px"><input id="adv-master-volume" type="range" min="0" max="1" step="0.05" value="${c.audio.masterVolume}" style="flex:1" oninput="document.getElementById('adv-master-volume-label').textContent=Math.round(this.value*100)+'%'"><span id="adv-master-volume-label" class="adv-muted">${Math.round(c.audio.masterVolume*100)}%</span></div></div></div>
     </details>
     <details class="adv-card"><summary><b>Síntesis del navegador · respaldo opcional</b></summary>
@@ -899,10 +990,13 @@ function renderAdvancedConfig(){
       <div class="adv-row"><label>Situación</label><select id="adv-pool-select" onchange="changeAdvancedPool(this.value)">${poolSelector}</select></div>
       <div id="adv-pool-editor" class="adv-pool"></div></div>
     </details>
-    <details class="adv-card"><summary><b>Efectos Jack</b></summary>
-      <div style="margin-top:10px"><div class="adv-muted">La misma plantilla sirve para N1, N2, N3 y N4.</div>
+    <details class="adv-card"><summary><b>Jack · una carpeta, varios niveles</b></summary>
+      <div style="margin-top:10px"><div class="adv-muted">Carpeta única: audio/jack/ con 1.mp3…tope. Cada audio puede pertenecer a uno o varios niveles y tener expresión fija o automática.</div>
+      <div class="adv-grid2"><div class="adv-row"><label>Tope Jack</label><input id="adv-jack-tope" type="number" min="0" step="1" value="${c.pools.jack?.tope||0}" onchange="captureJackTopAndRefresh()"></div><div class="adv-row"><label>Evitar últimos</label><input id="adv-jack-recent" type="number" min="0" max="20" value="${c.pools.jack?.recentAvoid??1}"></div></div>
+      <label class="adv-check"><input id="adv-jack-fallback-any" type="checkbox" ${c.jackRouting?.fallbackAnyWhenUnassigned!==false?'checked':''}>Si un nivel no tiene audios asignados, usar cualquier audio Jack</label>
       <div class="adv-row"><label>Nivel</label><select id="adv-jack-select" onchange="changeAdvancedJack(this.value)">${jackSelector}</select></div>
-      <div id="adv-jack-editor" class="adv-pool adv-level"></div></div>
+      <div id="adv-jack-editor" class="adv-pool adv-level"></div>
+      <div class="adv-pool-name" style="margin-top:12px">Asignación por archivo</div><div id="adv-jack-map"></div></div>
     </details>
     <details class="adv-card"><summary><b>Conexión remota · Firebase</b></summary>
       <div style="margin-top:10px">
@@ -949,6 +1043,11 @@ function readAdvancedConfig(){
   c.options.interMinSec=Number(document.getElementById('adv-inter-min')?.value ?? c.options.interMinSec);
   c.options.interMaxSec=Number(document.getElementById('adv-inter-max')?.value ?? c.options.interMaxSec);
   c.options.farewellDelaySec=Number(document.getElementById('adv-farewell-delay')?.value ?? c.options.farewellDelaySec);
+  c.options.maxInterventionsPerVisit=Number(document.getElementById('adv-max-interventions')?.value ?? c.options.maxInterventionsPerVisit);
+  c.options.contextDurationSec=Number(document.getElementById('adv-context-duration')?.value ?? c.options.contextDurationSec);
+  c.options.contextBoost=Number(document.getElementById('adv-context-boost')?.value ?? c.options.contextBoost);
+  if(c.pools.jack){ c.pools.jack.tope=Number(document.getElementById('adv-jack-tope')?.value ?? c.pools.jack.tope); c.pools.jack.recentAvoid=Number(document.getElementById('adv-jack-recent')?.value ?? c.pools.jack.recentAvoid); }
+  if(c.jackRouting) c.jackRouting.fallbackAnyWhenUnassigned=!!document.getElementById('adv-jack-fallback-any')?.checked;
   c.audio.masterVolume=Number(document.getElementById('adv-master-volume')?.value ?? c.audio.masterVolume);
   c.browserSpeech.enabled=!!document.getElementById('adv-browser-speech-enabled')?.checked;
   c.browserSpeech.familiar=String(document.getElementById('adv-browser-speech-familiar')?.value||'').split(/\r?\n/).map(x=>x.trim()).filter(Boolean);
@@ -996,21 +1095,34 @@ function resetAnimConfigDefaults(){ if(!confirm('¿Restaurar la configuración o
 async function triggerJackLevel(level){
   level=String(level||'').toUpperCase(); const cfg=RUNTIME_CONFIG.jackEffects[level];
   if(!cfg||!cfg.enabled) return {ok:false,reason:'nivel desactivado'};
+  if(isAnimMuted()) return {ok:false,reason:'silenciado'};
   if(S.speaking) return {ok:false,reason:'animatrónico ocupado'};
-  const played=cfg.pool?await tryPlayFromPool(cfg.pool):false;
-  if(cfg.emotions?.length) setEmotion(cfg.emotions[Math.floor(Math.random()*cfg.emotions.length)]);
-  return {ok:true,level,playedAudio:!!played,priority:cfg.priority};
+  const jp=RUNTIME_CONFIG.pools.jack||{};
+  let nums=[];
+  for(const [n,levels] of Object.entries(RUNTIME_CONFIG.jackRouting?.assignments||{})) if((levels||[]).includes(level)) nums.push(Number(n));
+  nums=nums.filter(n=>Number.isInteger(n)&&n>=1&&n<=Number(jp.tope||0));
+  if(!nums.length && RUNTIME_CONFIG.jackRouting?.fallbackAnyWhenUnassigned!==false) nums=Array.from({length:Number(jp.tope||0)},(_,i)=>i+1);
+  const played=nums.length?await tryPlayFromPoolSubset('jack',nums):false;
+  if(played && (!LAST_AUDIO_INFO.emotionFixed) && cfg.emotions?.length){
+    const emo=cfg.emotions[Math.floor(Math.random()*cfg.emotions.length)]; setEmotion(emo);
+  } else if(!played && cfg.emotions?.length){ setEmotion(cfg.emotions[Math.floor(Math.random()*cfg.emotions.length)]); }
+  LAST_EFFECT=`Jack ${level}`;
+  return {ok:true,level,playedAudio:!!played,audio:LAST_AUDIO_INFO.src||'',priority:cfg.priority};
 }
 
 // API única preparada para Firebase/ERP. La integración futura debe usar esta puerta.
 window.AnimatronicAPI = {
-  getState(){ return {speaking:S.speaking,faceTracking:S.faceTracking,animation:S.anim,mode:getActiveMode(),modeForced:RUNTIME_CONFIG.mode.forced||'',autoGreet:S.autoGreet,autoFarewell:S.autoFarewell,autoInterVisit:RUNTIME_CONFIG.options.autoInterVisit,promosEnabled:S.promosEnabled,browserSpeechEnabled:RUNTIME_CONFIG.browserSpeech.enabled,volume:S.volume,configVersion:RUNTIME_CONFIG.version}; },
+  getState(){ return {speaking:S.speaking,faceTracking:S.faceTracking,animation:S.anim,mode:getActiveMode(),modeForced:RUNTIME_CONFIG.mode.forced||'',autoGreet:S.autoGreet,autoFarewell:S.autoFarewell,autoInterVisit:RUNTIME_CONFIG.options.autoInterVisit,promosEnabled:S.promosEnabled,browserSpeechEnabled:RUNTIME_CONFIG.browserSpeech.enabled,volume:S.volume,configVersion:RUNTIME_CONFIG.version,visitState:VISIT_RUNTIME.state,visitInterventions:VISIT_RUNTIME.interventions,maxInterventions:RUNTIME_CONFIG.options.maxInterventionsPerVisit,contextPool:activeVisitContextPool(),contextRemainingSec:visitContextRemainingSec(),silenceRemainingSec:muteRemainingSec(),lastAudio:LAST_AUDIO_INFO.src||'',lastEffect:LAST_EFFECT||''}; },
   getConfig(){ return currentConfigSnapshot(); },
   setMode(mode){ setTrollMode(mode||''); return this.getState(); },
   setOption(name,value){ if(name==='autoGreet')setAutoGreet(value); else if(name==='autoFarewell')setAutoFarewell(value); else if(name==='autoInterVisit'){ RUNTIME_CONFIG.options.autoInterVisit=!!value; applyRuntimeConfig(true); } else if(name==='promosEnabled')setPromosEnabled(value); else if(name==='browserSpeechEnabled'){ RUNTIME_CONFIG.browserSpeech.enabled=!!value; applyRuntimeConfig(true); } else if(name==='faceTracking'){ if(value&&!S.faceTracking)startFaceTracking(); if(!value&&S.faceTracking)stopFaceTracking(); } else throw new Error('Opción remota no permitida'); return this.getState(); },
   setPoolConfig(name,patch){ if(!RUNTIME_CONFIG.pools[name])throw new Error('Carpeta desconocida'); RUNTIME_CONFIG.pools[name]=Object.assign({},RUNTIME_CONFIG.pools[name],patch||{}); applyRuntimeConfig(true); return cloneJson(RUNTIME_CONFIG.pools[name]); },
-  triggerEmotion(name){ if(!ANIMS.includes(name))throw new Error('Emoción desconocida'); setEmotion(name); return {ok:true,animation:S.anim}; },
-  triggerCategory(name){ if(!AUDIO_POOLS_CONFIG[name])throw new Error('Categoría desconocida'); return speakFromCategory(name); },
+  setVisitContext(name,durationSec,nextOnly=false){ return setVisitContext(name,durationSec,nextOnly); },
+  clearVisitContext(){ clearVisitContext(); return this.getState(); },
+  silence(seconds=30){ silenceAnimatronic(seconds); return this.getState(); },
+  resume(){ resumeAnimatronic(); return this.getState(); },
+  triggerEmotion(name){ if(!ANIMS.includes(name))throw new Error('Emoción desconocida'); setEmotion(name); LAST_EFFECT=`Emoción ${name}`; return {ok:true,animation:S.anim}; },
+  triggerCategory(name){ if(!AUDIO_POOLS_CONFIG[name])throw new Error('Categoría desconocida'); LAST_EFFECT=`Situación ${POOL_LABELS[name]||name}`; return speakFromCategory(name); },
   triggerJackLevel(level){ return triggerJackLevel(level); },
   applyConfig(cfg){ RUNTIME_CONFIG=normalizeRuntimeConfig(cfg); applyRuntimeConfig(true); return this.getConfig(); }
 };
@@ -1220,83 +1332,133 @@ const MIN_EVENT_GAP_MS = 4000;
 
 let visitInterNextAt = 0;
 let visitInterBusy = false;
-let visitInterLastPool = '';
+const VISIT_RUNTIME = {state:'sin_cliente',startedAt:0,interventions:0,lastPool:'',contextPool:'',contextUntil:0,contextNextOnly:false,stateUntil:0};
+let MUTE_UNTIL = 0;
+let LAST_EFFECT = '';
+let LAST_AUDIO_INFO = {pool:'',n:0,src:'',emotion:'',emotionFixed:false,at:0};
+const RECENT_AUDIO_BY_POOL = {};
+let CURRENT_AUDIO_EL = null;
+
+function setVisitState(st,holdMs=0){ VISIT_RUNTIME.state=st; VISIT_RUNTIME.stateUntil=holdMs?performance.now()+holdMs:0; }
+function activeVisitContextPool(){
+  if(VISIT_RUNTIME.contextPool && performance.now()<VISIT_RUNTIME.contextUntil) return VISIT_RUNTIME.contextPool;
+  if(VISIT_RUNTIME.contextPool) clearVisitContext();
+  return '';
+}
+function visitContextRemainingSec(){ return activeVisitContextPool()?Math.max(0,Math.ceil((VISIT_RUNTIME.contextUntil-performance.now())/1000)):0; }
+function setVisitContext(name,durationSec,nextOnly=false){
+  name=String(name||''); if(!RUNTIME_CONFIG.pools[name] || !name.startsWith('situ_')) throw new Error('Contexto desconocido');
+  const sec=clampNum(durationSec,5,600,RUNTIME_CONFIG.options.contextDurationSec||45);
+  VISIT_RUNTIME.contextPool=name; VISIT_RUNTIME.contextUntil=performance.now()+sec*1000; VISIT_RUNTIME.contextNextOnly=!!nextOnly;
+  LAST_EFFECT=`Contexto ${POOL_LABELS[name]||name}`; return {ok:true,pool:name,durationSec:sec,nextOnly:!!nextOnly};
+}
+function clearVisitContext(){ VISIT_RUNTIME.contextPool=''; VISIT_RUNTIME.contextUntil=0; VISIT_RUNTIME.contextNextOnly=false; }
+function isAnimMuted(){ return performance.now()<MUTE_UNTIL; }
+function muteRemainingSec(){ return isAnimMuted()?Math.max(0,Math.ceil((MUTE_UNTIL-performance.now())/1000)):0; }
+function silenceAnimatronic(seconds=30){
+  const sec=clampNum(seconds,1,3600,30); MUTE_UNTIL=performance.now()+sec*1000;
+  try{ if(CURRENT_AUDIO_EL){ CURRENT_AUDIO_EL.pause(); CURRENT_AUDIO_EL.currentTime=0; } }catch(_){ }
+  try{ window.speechSynthesis?.cancel(); }catch(_){ }
+  S.speaking=false; document.getElementById('voice-indicator')?.classList.remove('active'); LAST_EFFECT=`Silencio ${sec}s`; return sec;
+}
+function resumeAnimatronic(){ MUTE_UNTIL=0; LAST_EFFECT='Audio reactivado'; }
 
 function visitFarewellFrames(){
   const sec=Number(RUNTIME_CONFIG?.options?.farewellDelaySec||1.6);
   return Math.max(1,Math.round((sec*1000)/35));
 }
 function scheduleNextVisitInter(now=performance.now()){
-  if(!RUNTIME_CONFIG?.options?.autoInterVisit){ visitInterNextAt=0; return; }
+  if(!RUNTIME_CONFIG?.options?.autoInterVisit || isAnimMuted()){ visitInterNextAt=0; return; }
+  const maxI=Math.max(0,Number(RUNTIME_CONFIG.options.maxInterventionsPerVisit)||0);
+  if(maxI && VISIT_RUNTIME.interventions>=maxI){ visitInterNextAt=0; return; }
   const min=Math.max(3,Number(RUNTIME_CONFIG.options.interMinSec)||20);
   const max=Math.max(min,Number(RUNTIME_CONFIG.options.interMaxSec)||35);
   visitInterNextAt=now+(min+Math.random()*(max-min))*1000;
 }
-function resetVisitInter(){ visitInterNextAt=0; visitInterBusy=false; visitInterLastPool=''; }
+function resetVisitInter(){ visitInterNextAt=0; visitInterBusy=false; VISIT_RUNTIME.lastPool=''; VISIT_RUNTIME.interventions=0; clearVisitContext(); }
 function eligibleVisitPools(){
   return Object.entries(RUNTIME_CONFIG?.pools||{})
-    .filter(([k,p])=>p && p.enabled!==false && p.autoVisit && AUDIO_POOLS_CONFIG[k])
+    .filter(([k,p])=>k.startsWith('situ_') && p && p.enabled!==false && p.autoVisit && AUDIO_POOLS_CONFIG[k])
     .filter(([k,p])=>(Number(p.tope)||0)>0 || ((S.promosEnabled??true) && (CATEGORY_PROMOS[k]||[]).length>0))
-    .map(([k])=>k);
+    .map(([k,p])=>({name:k,weight:Math.max(0,Number(p.weight)||0)}))
+    .filter(x=>x.weight>0);
+}
+function chooseWeightedVisitPool(items){
+  const ctx=activeVisitContextPool();
+  if(ctx && VISIT_RUNTIME.contextNextOnly && items.some(x=>x.name===ctx)){ clearVisitContext(); return ctx; }
+  const boost=Math.max(1,Number(RUNTIME_CONFIG.options.contextBoost)||5);
+  const weighted=items.map(x=>({name:x.name,w:x.weight*(ctx===x.name?boost:1)}));
+  let total=weighted.reduce((a,x)=>a+x.w,0); if(total<=0)return '';
+  let roll=Math.random()*total;
+  for(const x of weighted){ if(roll<x.w)return x.name; roll-=x.w; }
+  return weighted.at(-1)?.name||'';
 }
 async function triggerVisitIntermission(){
-  if(visitInterBusy || S.speaking || !RUNTIME_CONFIG?.options?.autoInterVisit) return false;
-  let pools=eligibleVisitPools();
-  if(!pools.length){ scheduleNextVisitInter(); return false; }
-  if(pools.length>1 && visitInterLastPool) pools=pools.filter(x=>x!==visitInterLastPool).concat(pools.filter(x=>x===visitInterLastPool));
-  const pool=pools[Math.floor(Math.random()*Math.min(pools.length,Math.max(1,pools.length-(pools.length>1?1:0))))];
+  if(visitInterBusy || S.speaking || isAnimMuted() || !RUNTIME_CONFIG?.options?.autoInterVisit) return false;
+  const maxI=Math.max(0,Number(RUNTIME_CONFIG.options.maxInterventionsPerVisit)||0);
+  if(maxI && VISIT_RUNTIME.interventions>=maxI){ visitInterNextAt=0; return false; }
+  const items=eligibleVisitPools();
+  if(!items.length){ scheduleNextVisitInter(); return false; }
+  let pool=chooseWeightedVisitPool(items);
+  if(items.length>1 && pool===VISIT_RUNTIME.lastPool){
+    const alt=items.filter(x=>x.name!==pool); if(alt.length) pool=chooseWeightedVisitPool(alt);
+  }
+  if(!pool){ scheduleNextVisitInter(); return false; }
   visitInterBusy=true;
   try{
-    await speakFromCategory(pool);
-    visitInterLastPool=pool;
-    return true;
+    const ok=await speakFromCategory(pool);
+    if(ok){ VISIT_RUNTIME.lastPool=pool; VISIT_RUNTIME.interventions++; LAST_EFFECT=`Inter ${POOL_LABELS[pool]||pool}`; }
+    return !!ok;
   }catch(e){ console.warn('Inter visita:',e); return false; }
   finally{ visitInterBusy=false; scheduleNextVisitInter(); }
 }
 
 function maybeTriggerPresenceEvents(faceDetected) {
   const now = performance.now();
+  if(VISIT_RUNTIME.stateUntil && now>VISIT_RUNTIME.stateUntil && VISIT_RUNTIME.state==='despedida') setVisitState('sin_cliente');
 
   if (faceDetected) {
+    if(S.facePresentStreak===0){ if(VISIT_RUNTIME.state==='sin_cliente'){ VISIT_RUNTIME.startedAt=now; VISIT_RUNTIME.interventions=0; } setVisitState('detectado'); }
     S.facePresentStreak++;
     S.faceAbsentStreak = 0;
 
-    // Arranca el reloj de "media visita" desde que la cara ya es estable,
-    // aunque el saludo automático esté apagado.
-    if(S.facePresentStreak === PRESENT_FRAMES_TO_GREET && !visitInterNextAt) scheduleNextVisitInter(now);
+    if(S.facePresentStreak === PRESENT_FRAMES_TO_GREET && !visitInterNextAt){ setVisitState('visita'); scheduleNextVisitInter(now); }
 
     if (S.autoGreet && !S.hasGreetedThisVisit &&
         S.facePresentStreak >= PRESENT_FRAMES_TO_GREET &&
-        !S.speaking && (now - S.lastGreetAt > MIN_EVENT_GAP_MS)) {
+        !S.speaking && !isAnimMuted() && (now - S.lastGreetAt > MIN_EVENT_GAP_MS)) {
       triggerGreeting();
       S.hasGreetedThisVisit = true;
       S.lastGreetAt = now;
-    }
+      setVisitState('saludado');
+      setTimeout(()=>{ if(VISIT_RUNTIME.state==='saludado') setVisitState('visita'); },700);
+    } else if(S.facePresentStreak >= PRESENT_FRAMES_TO_GREET && VISIT_RUNTIME.state==='detectado') setVisitState('visita');
 
-    if(visitInterNextAt && now>=visitInterNextAt && !S.speaking) triggerVisitIntermission();
+    if(visitInterNextAt && now>=visitInterNextAt && !S.speaking && !isAnimMuted()) triggerVisitIntermission();
   } else {
+    if(S.facePresentStreak>0 || VISIT_RUNTIME.state==='visita' || VISIT_RUNTIME.state==='saludado') setVisitState('ausencia');
     S.faceAbsentStreak++;
     S.facePresentStreak = 0;
 
     const farewellFrames=visitFarewellFrames();
     if (S.faceAbsentStreak >= farewellFrames) {
-      // Al confirmar que la visita terminó, cancela cualquier inter pendiente.
       resetVisitInter();
       if(S.hasGreetedThisVisit){
-        if (S.autoFarewell && !S.speaking && (now - S.lastGreetAt > MIN_EVENT_GAP_MS)) {
+        if (S.autoFarewell && !S.speaking && !isAnimMuted() && (now - S.lastGreetAt > MIN_EVENT_GAP_MS)) {
           triggerFarewell();
           S.lastGreetAt = now;
-        }
+          setVisitState('despedida',2000);
+        } else setVisitState('sin_cliente');
         S.hasGreetedThisVisit = false;
-      }
+      } else if(VISIT_RUNTIME.state!=='despedida') setVisitState('sin_cliente');
     }
   }
 }
-
 // ── SALUDO / DESPEDIDA: sólo pools numerados + respaldo configurable ──
 // Ya no se mezclan frases escritas fijas con los pools. Así, si greet_familiar/greet_troll
 // tienen audios 1.mp3..tope, siempre se elige uno de esos archivos al azar.
 async function playPoolWithEmergencyFallback(poolName) {
+  if(isAnimMuted()) return false;
   const ok = await tryPlayFromPool(poolName);
   if(ok) return true;
   const ttsOk = tryBrowserSpeechRandom();
@@ -1984,7 +2146,7 @@ function setVolume(v) { setMasterVolume(v); }
 let LAST_BROWSER_SPEECH = { familiar:-1, troll:-1 };
 function speakPhrase(text) {
   text=String(text||'').trim();
-  if(!text || !window.speechSynthesis) return false;
+  if(isAnimMuted() || !text || !window.speechSynthesis) return false;
   try{
     window.speechSynthesis.cancel();
     const utt = new SpeechSynthesisUtterance(text);
@@ -2013,17 +2175,22 @@ function tryBrowserSpeechRandom(){
 }
 
 function playAudioEl(audio, volumeMultiplier=1) {
+  if(isAnimMuted()) return false;
   const ind = document.getElementById('voice-indicator');
+  CURRENT_AUDIO_EL=audio;
   audio.volume = Math.max(0,Math.min(1,S.volume * clampNum(volumeMultiplier,0,1,1)));
   ind.classList.add('active'); S.speaking = true;
-  audio.onended = () => { ind.classList.remove('active'); S.speaking = false; };
-  audio.play().catch(() => { ind.classList.remove('active'); S.speaking = false; });
+  const done=()=>{ if(CURRENT_AUDIO_EL===audio)CURRENT_AUDIO_EL=null; ind.classList.remove('active'); S.speaking = false; };
+  audio.onended = done; audio.onerror=done;
+  audio.play().catch(done);
+  return true;
 }
 
 function tryPlayLocalFile(src, volumeMultiplier=1) {
+  if(isAnimMuted()) return Promise.resolve(false);
   return new Promise(resolve => {
     const audio = new Audio(src);
-    audio.oncanplaythrough = () => { playAudioEl(audio,volumeMultiplier); resolve(true); };
+    audio.oncanplaythrough = () => { resolve(!!playAudioEl(audio,volumeMultiplier)); };
     audio.onerror = () => resolve(false);
     audio.load();
   });
@@ -2061,21 +2228,45 @@ function pickPoolEmotion(cfg, n) {
 
 // prueba archivos numerados al azar dentro del tope configurado, hasta que uno cargue,
 // y aplica la emoción que le corresponda a ese número
-async function tryPlayFromPool(poolName, maxAttempts = 5) {
-  const cfg = AUDIO_POOLS_CONFIG[poolName];
-  if (!cfg || cfg.enabled === false || !cfg.tope) return false;
-  const order = shuffleRange(1, cfg.tope).slice(0, maxAttempts);
-  for (const n of order) {
-    const ok = await tryPlayLocalFile(`${cfg.folder}/${n}.mp3`, cfg.volume ?? 1);
-    if (ok) {
-      const emo = pickPoolEmotion(cfg, n);
-      if (emo) setEmotion(emo);
+function recentFilteredOrder(poolName,numbers){
+  const cfg=AUDIO_POOLS_CONFIG[poolName]||{};
+  const avoid=Math.max(0,Number(cfg.recentAvoid)||0);
+  const recent=avoid>0?(RECENT_AUDIO_BY_POOL[poolName]||[]).slice(-avoid):[];
+  let arr=[...numbers].filter(n=>!recent.includes(n));
+  if(!arr.length) arr=[...numbers];
+  for(let i=arr.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [arr[i],arr[j]]=[arr[j],arr[i]]; }
+  return arr;
+}
+function rememberPoolAudio(poolName,n){
+  const cfg=AUDIO_POOLS_CONFIG[poolName]||{}; const keep=Math.max(0,Number(cfg.recentAvoid)||0);
+  const arr=RECENT_AUDIO_BY_POOL[poolName]||(RECENT_AUDIO_BY_POOL[poolName]=[]); arr.push(n);
+  while(arr.length>keep) arr.shift();
+}
+async function tryPlayFromPoolSubset(poolName,numbers,maxAttempts=8){
+  const cfg=AUDIO_POOLS_CONFIG[poolName];
+  if(!cfg || cfg.enabled===false || isAnimMuted()) return false;
+  let nums=[...new Set((numbers||[]).map(Number).filter(n=>Number.isInteger(n)&&n>=1&&n<=Number(cfg.tope||0)))];
+  if(!nums.length) return false;
+  const order=recentFilteredOrder(poolName,nums).slice(0,maxAttempts);
+  for(const n of order){
+    const src=`${cfg.folder}/${n}.mp3`;
+    const ok=await tryPlayLocalFile(src,cfg.volume??1);
+    if(ok){
+      const fixed=!!(cfg.numberEmotions&&cfg.numberEmotions[n]);
+      const emo=pickPoolEmotion(cfg,n); if(emo)setEmotion(emo);
+      rememberPoolAudio(poolName,n);
+      LAST_AUDIO_INFO={pool:poolName,n,src,emotion:emo||'',emotionFixed:fixed,at:Date.now()};
       return true;
     }
   }
   return false;
 }
-
+async function tryPlayFromPool(poolName, maxAttempts = 5) {
+  const cfg = AUDIO_POOLS_CONFIG[poolName];
+  if (!cfg || cfg.enabled === false || !cfg.tope || isAnimMuted()) return false;
+  const nums=Array.from({length:Number(cfg.tope)},(_,i)=>i+1);
+  return await tryPlayFromPoolSubset(poolName,nums,maxAttempts);
+}
 // dispara una categoría de situación: sortea entre promos (peso alto) y el pool numerado normal
 async function speakFromCategory(categoria, emocionSiFalla) {
   const cfg = AUDIO_POOLS_CONFIG[categoria] || { tope: 0 };
@@ -2260,6 +2451,21 @@ async function executeCommand(id, cmd){
       if(window.getAnimatronicRemoteState().speaking) return {status:'busy',reason:'speaking'};
       result=await window.AnimatronicAPI.triggerCategory(String(payload.name||''));
       break;
+    case 'context':
+      result=window.AnimatronicAPI.setVisitContext(String(payload.name||''),payload.durationSec,!!payload.nextOnly);
+      break;
+    case 'clear_context':
+      result=window.AnimatronicAPI.clearVisitContext();
+      break;
+    case 'silence':
+      result=window.AnimatronicAPI.silence(payload.seconds||30);
+      break;
+    case 'resume':
+      result=window.AnimatronicAPI.resume();
+      break;
+    case 'get_config':
+      result=window.AnimatronicAPI.getConfig();
+      break;
     case 'jack_level':
       result=await window.AnimatronicAPI.triggerJackLevel(String(payload.level||''));
       break;
@@ -2279,6 +2485,7 @@ try {
   const db=getDatabase(app);
 
   const stateRef=ref(db,`${ROOT}/devices/${DEVICE_ID}/state`);
+  const configRef=ref(db,`${ROOT}/devices/${DEVICE_ID}/config`);
   const ackBase=`${ROOT}/acks/${DEVICE_ID}`;
   const commandRef=ref(db,`${ROOT}/commands/${DEVICE_ID}`);
   const allCommandRef=ref(db,`${ROOT}/commands/all`);
@@ -2333,12 +2540,21 @@ try {
 
   let lastStateSig='';
   let lastPublishAt=0;
+  let lastConfigSig='';
+  async function publishConfig(force=false){
+    try{
+      const cfg=window.AnimatronicAPI.getConfig(); const sig=JSON.stringify(cfg);
+      if(!force && sig===lastConfigSig)return;
+      lastConfigSig=sig; await set(configRef,{...cfg,reportedAt:serverTimestamp()});
+    }catch(e){ uiPatch({lastError:'Config: '+(e.message||String(e))}); }
+  }
   async function publishState(force=false){
     try{
       const st=window.getAnimatronicRemoteState();
       const sig=JSON.stringify(st);
       const n=now();
-      if(!force && sig===lastStateSig && n-lastPublishAt<10000) return;
+      publishConfig(false);
+      if(!force && sig===lastStateSig && n-lastPublishAt<15000) return;
       lastStateSig=sig; lastPublishAt=n;
       await update(stateRef,{...st,uid:auth.currentUser?.uid||'',updatedAt:serverTimestamp(),clientNow:n});
     }catch(e){
@@ -2346,11 +2562,12 @@ try {
     }
   }
 
-  // Reacciona rápido a speaking/facePresent, pero sólo escribe si algo cambió.
-  setInterval(()=>publishState(false),350);
+  // Lectura compacta: revisa cambios con frecuencia moderada y sólo escribe si cambió algo; heartbeat cada 15 s.
+  setInterval(()=>publishState(false),600);
+  await publishConfig(true);
   await publishState(true);
   uiPatch({lastError:''});
-  window.AnimatronicRemote={publishState,deviceId:DEVICE_ID};
+  window.AnimatronicRemote={publishState,publishConfig,deviceId:DEVICE_ID};
 }catch(e){
   console.error('Firebase bridge:',e);
   uiPatch({connected:false,authenticated:false,lastError:e.message||String(e)});

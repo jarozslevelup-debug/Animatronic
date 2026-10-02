@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Control A2 · Halloween 2026</title>
+<style>
+:root{--bg:#09090b;--p:#141419;--p2:#1d1d24;--line:#30303a;--txt:#f3f3f5;--mut:#a0a0aa;--ok:#43df88;--bad:#ff6670;--acc:#ff5b24;--warn:#ffd15a}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--txt);font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;padding:10px}button,input,select,textarea{font:inherit}button{border:1px solid var(--line);background:#24242c;color:#fff;border-radius:9px;padding:9px 11px;font-weight:700}button:active{transform:scale(.98)}button.acc{background:var(--acc);border-color:var(--acc)}button.danger{border-color:#8b3138}button.good{border-color:#2d8958}.bar{position:sticky;top:0;z-index:20;background:rgba(9,9,11,.96);backdrop-filter:blur(7px);border:1px solid var(--line);border-radius:11px;padding:8px;margin-bottom:8px;display:flex;gap:8px;align-items:center;overflow:auto;white-space:nowrap;font-size:12px}.dot{width:9px;height:9px;border-radius:50%;background:var(--bad);display:inline-block}.dot.on{background:var(--ok);box-shadow:0 0 8px var(--ok)}.tag{padding:4px 7px;background:var(--p2);border-radius:999px}.card{background:var(--p);border:1px solid var(--line);border-radius:12px;padding:10px;margin:8px 0}.title{font-size:13px;font-weight:800;margin-bottom:8px}.row{display:flex;gap:7px;flex-wrap:wrap;align-items:center}.hscroll{display:flex;gap:7px;overflow:auto;padding-bottom:3px}.hscroll button{flex:0 0 auto}.small{font-size:11px;color:var(--mut);line-height:1.4}.grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px}.field{display:flex;flex-direction:column;gap:4px}.field label{font-size:11px;color:var(--mut)}input[type=number],input[type=time],select,textarea{width:100%;background:#0f0f13;color:#fff;border:1px solid var(--line);border-radius:8px;padding:8px}textarea{min-height:95px;resize:vertical}.checks{display:flex;gap:6px;flex-wrap:wrap}.check{display:flex;gap:4px;align-items:center;background:#202027;padding:5px 7px;border-radius:8px;font-size:11px}details summary{cursor:pointer;font-weight:800;font-size:13px}.sep{height:1px;background:var(--line);margin:9px 0}.audio-row{display:grid;grid-template-columns:52px 1fr 120px;gap:7px;align-items:center;padding:6px 0;border-top:1px solid rgba(255,255,255,.07)}#log{max-height:100px;overflow:auto;background:#08080a;border:1px solid var(--line);border-radius:8px;padding:7px;font:10px/1.4 ui-monospace,Consolas,monospace;white-space:pre-wrap}@media(max-width:620px){.audio-row{grid-template-columns:48px 1fr}.audio-row select{grid-column:1/-1}.grid2{grid-template-columns:1fr 1fr}}
+</style>
+</head>
+<body>
+<div class="bar"><span><span id="dot" class="dot"></span> <b id="online">A2 —</b></span><span class="tag" id="face">👤 —</span><span class="tag" id="speak">🔊 —</span><span class="tag" id="visit">VISITA —</span><span class="tag" id="mode">MODO —</span><span class="tag" id="ctx">CTX —</span><span class="tag" id="jack">INT —</span></div>
+
+<div class="card">
+  <div class="title">Vendedor · hablar ahora</div>
+  <div id="situNow" class="hscroll"></div>
+  <div class="small" style="margin-top:6px">Dispara una frase aleatoria de esa carpeta. Si el A2 está hablando, devuelve ocupado.</div>
+</div>
+
+<div class="card">
+  <div class="title">Contexto de visita</div>
+  <div class="row" style="margin-bottom:7px"><label class="check"><input id="ctxNext" type="checkbox">Sólo la próxima intervención</label><button onclick="send('clear_context',{})">Limpiar contexto</button></div>
+  <div id="situContext" class="hscroll"></div>
+  <div class="small" style="margin-top:6px">No habla al instante: favorece esa situación durante el tiempo configurado.</div>
+</div>
+
+<div class="card">
+  <div class="title">Control rápido</div>
+  <div class="hscroll"><button onclick="send('mode',{mode:''})">AUTO</button><button onclick="send('mode',{mode:'familiar'})">FAMILIAR</button><button onclick="send('mode',{mode:'troll'})">TROLL</button><button onclick="toggleOpt('autoGreet')">SALUDOS</button><button onclick="toggleOpt('autoFarewell')">DESPEDIDA</button><button onclick="toggleOpt('autoInterVisit')">INTER</button><button onclick="toggleOpt('promosEnabled')">PROMOS</button></div>
+  <div class="hscroll" style="margin-top:7px"><button class="danger" onclick="send('silence',{seconds:30})">🔇 30 s</button><button class="danger" onclick="send('silence',{seconds:60})">🔇 1 min</button><button class="good" onclick="send('resume',{})">🔊 REACTIVAR</button><button onclick="send('ping',{})">PING</button></div>
+</div>
+
+<div class="card">
+  <div class="title">Jack manual</div>
+  <div class="hscroll"><button onclick="send('jack_level',{level:'N1'})">N1</button><button onclick="send('jack_level',{level:'N2'})">N2</button><button onclick="send('jack_level',{level:'N3'})">N3</button><button onclick="send('jack_level',{level:'N4'})">N4</button></div>
+</div>
+
+<details class="card">
+<summary>Configuración avanzada</summary>
+<div style="margin-top:10px">
+  <div class="title">Proceso de visita</div>
+  <div class="grid2">
+    <div class="field"><label>Inter mínimo (s)</label><input id="interMin" type="number" min="3"></div>
+    <div class="field"><label>Inter máximo (s)</label><input id="interMax" type="number" min="3"></div>
+    <div class="field"><label>Despedida tras ausencia (s)</label><input id="farewell" type="number" min="0.5" step="0.1"></div>
+    <div class="field"><label>Máx. intervenciones / visita</label><input id="maxInter" type="number" min="0" max="20"></div>
+    <div class="field"><label>Duración contexto (s)</label><input id="ctxDur" type="number" min="5"></div>
+    <div class="field"><label>Fuerza contexto</label><input id="ctxBoost" type="number" min="1" step="0.5"></div>
+  </div>
+  <div class="sep"></div>
+  <div class="title">Situaciones</div>
+  <div class="field"><label>Situación</label><select id="poolSelect" onchange="changePoolRemote(this.value)"></select></div>
+  <div id="poolEditor" style="margin-top:8px"></div>
+  <div class="sep"></div>
+  <div class="title">Jack · audio/jack/</div>
+  <div class="grid2"><div class="field"><label>Tope Jack</label><input id="jackTope" type="number" min="0" onchange="renderJackMap()"></div><div class="field"><label>Evitar últimos</label><input id="jackRecent" type="number" min="0"></div></div>
+  <label class="check" style="margin-top:8px"><input id="jackFallback" type="checkbox">Si un nivel no tiene asignados, usar cualquier audio Jack</label>
+  <div id="jackMap" style="margin-top:8px"></div>
+  <div class="sep"></div>
+  <div class="title">Síntesis del navegador</div>
+  <label class="check"><input id="speechEnabled" type="checkbox">Activar sólo como respaldo</label>
+  <div class="grid2" style="margin-top:8px"><div class="field"><label>Familiar · una frase por línea</label><textarea id="speechFam"></textarea></div><div class="field"><label>Troll · una frase por línea</label><textarea id="speechTroll"></textarea></div></div>
+  <div class="row" style="margin-top:10px"><button class="acc" onclick="saveAdvanced()">GUARDAR EN A2</button><button onclick="reloadCfg()">Recargar</button></div>
+</div>
+</details>
+
+<details class="card"><summary>Diagnóstico</summary><div style="margin-top:8px" class="small" id="diag">—</div><div id="log" style="margin-top:8px">Esperando…</div></details>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-app.js";
+import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-auth.js";
+import { getDatabase, ref, push, set, onValue, onChildAdded } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-database.js";
+
+const firebaseConfig={apiKey:"AIzaSyBkw1MxkhJYnqxfVxq77aY1_x0yIHHdOy4",authDomain:"halloween-2026-be987.firebaseapp.com",databaseURL:"https://halloween-2026-be987-default-rtdb.firebaseio.com/",projectId:"halloween-2026-be987",storageBucket:"halloween-2026-be987.firebasestorage.app",messagingSenderId:"286510623769",appId:"1:286510623769:web:5fe34a3ad2fffa8a374e88"};
+const ROOT='halloween2026/animatronic', DEVICE='A2';
+const SITU={situ_mascaras:'🎭 Máscaras',situ_indeciso:'🤔 Indeciso',situ_fiado:'🧾 Fiado',situ_regateo:'💸 Regateo',situ_venta:'💰 Venta',situ_album:'📕 Álbum',situ_chiste:'😈 Chiste'};
+const ANIMS=['idle','blink','happy','angry','furia','sad','surprised','sleepy','suspicious','evil','possessed','spin','glitch','dead','wink','curioso','riendo','alerta','siniestro','escalofrio','travieso','estatico','membrana','obturador'];
+const app=initializeApp(firebaseConfig), auth=getAuth(app), db=getDatabase(app);
+let state={}, cfg=null, firebaseOk=false, selectedPool='situ_mascaras';
+const $=id=>document.getElementById(id);
+function clone(v){return JSON.parse(JSON.stringify(v))}
+function log(m){$('log').textContent=`[${new Date().toLocaleTimeString()}] ${m}\n`+$('log').textContent}
+function esc(s){return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;')}
+function buttons(){
+  $('situNow').innerHTML=Object.entries(SITU).map(([k,n])=>`<button onclick="send('category',{name:'${k}'})">${n}</button>`).join('');
+  $('situContext').innerHTML=Object.entries(SITU).map(([k,n])=>`<button onclick="setCtx('${k}')">${n}</button>`).join('');
+}
+window.send=async(type,payload={})=>{
+  try{if(!auth.currentUser)throw Error('sin autenticación');const n=push(ref(db,`${ROOT}/commands/${DEVICE}`)),t=Date.now();await set(n,{type,target:DEVICE,createdAt:t,expiresAt:t+30000,payload});log(`→ ${type}`);return n.key}catch(e){log(`ERROR ${type}: ${e.message}`)}
+};
+window.setCtx=name=>send('context',{name,durationSec:Number(cfg?.options?.contextDurationSec||45),nextOnly:$('ctxNext').checked});
+window.toggleOpt=name=>send('option',{name,value:!state[name]});
+function paintState(){
+  $('dot').classList.toggle('on',!!state.online);$('online').textContent=state.online?'A2 ONLINE':'A2 OFFLINE';
+  $('face').textContent=state.facePresent?'👤 CARA':'👤 —';$('speak').textContent=state.speaking?'🔊 HABLANDO':'🔊 LIBRE';
+  $('visit').textContent=`VISITA ${state.visitState||'—'}`;$('mode').textContent=`${state.mode||'—'}`.toUpperCase();
+  $('ctx').textContent=state.contextPool?`CTX ${(SITU[state.contextPool]||state.contextPool).replace(/^\S+\s/,'')} ${state.contextRemainingSec||0}s`:'CTX —';
+  $('jack').textContent=`INT ${state.visitInterventions||0}/${state.maxInterventions??'—'}`;
+  $('diag').innerHTML=`Último audio: <b>${esc(state.lastAudio||'—')}</b><br>Último efecto: <b>${esc(state.lastEffect||'—')}</b><br>Emoción: <b>${esc(state.animation||'—')}</b><br>Silencio: <b>${state.silenceRemainingSec||0}s</b><br>Face tracking: <b>${state.faceTracking?'ON':'OFF'}</b>`;
+}
+function fillAdvanced(){
+  if(!cfg)return;
+  $('interMin').value=cfg.options?.interMinSec??20;$('interMax').value=cfg.options?.interMaxSec??35;$('farewell').value=cfg.options?.farewellDelaySec??1.6;$('maxInter').value=cfg.options?.maxInterventionsPerVisit??2;$('ctxDur').value=cfg.options?.contextDurationSec??45;$('ctxBoost').value=cfg.options?.contextBoost??5;
+  $('speechEnabled').checked=!!cfg.browserSpeech?.enabled;$('speechFam').value=(cfg.browserSpeech?.familiar||[]).join('\n');$('speechTroll').value=(cfg.browserSpeech?.troll||[]).join('\n');
+  $('poolSelect').innerHTML=Object.keys(SITU).map(k=>`<option value="${k}" ${k===selectedPool?'selected':''}>${SITU[k]}</option>`).join('');
+  $('jackTope').value=cfg.pools?.jack?.tope??0;$('jackRecent').value=cfg.pools?.jack?.recentAvoid??1;$('jackFallback').checked=cfg.jackRouting?.fallbackAnyWhenUnassigned!==false;
+  renderPoolEditor();renderJackMap();
+}
+window.changePoolRemote=(name)=>{ try{capturePool()}catch(_){} selectedPool=name; $('poolSelect').value=name; renderPoolEditor(); };
+window.renderPoolEditor=()=>{
+  if(!cfg)return; const k=selectedPool||$('poolSelect').value||Object.keys(SITU)[0],p=cfg.pools?.[k]||{}; $('poolSelect').value=k;
+  const top=Math.max(0,Number(p.tope)||0);let amap='';for(let n=1;n<=top;n++){const fixed=p.numberEmotions?.[String(n)]||'';const opts=['<option value="">Automática</option>',...ANIMS.map(a=>`<option value="${a}" ${fixed===a?'selected':''}>${a}</option>`)].join('');amap+=`<div class="audio-row"><b>${n}.mp3</b><div class="small">Expresión fija</div><select data-pe="${n}">${opts}</select></div>`;}
+  $('poolEditor').innerHTML=`<div class="row"><label class="check"><input id="peEnabled" type="checkbox" ${p.enabled!==false?'checked':''}>Activa</label><label class="check"><input id="peAuto" type="checkbox" ${p.autoVisit?'checked':''}>Automática en visita</label></div><div class="grid2" style="margin-top:7px"><div class="field"><label>Tope</label><input id="peTope" type="number" min="0" value="${p.tope||0}" onchange="poolTopChanged()"></div><div class="field"><label>Peso automático</label><input id="peWeight" type="number" min="0" step="0.5" value="${p.weight??1}"></div><div class="field"><label>Prioridad</label><input id="pePriority" type="number" min="0" max="100" value="${p.priority??30}"></div><div class="field"><label>Evitar últimos</label><input id="peRecent" type="number" min="0" value="${p.recentAvoid??2}"></div></div><div class="small" style="margin-top:6px">${esc(p.folder||'')}</div>${amap||'<div class="small" style="margin-top:7px">Sin audios numerados todavía.</div>'}`;
+};
+function capturePool(){if(!cfg)return;const k=selectedPool||$('poolSelect').value,p=cfg.pools[k];if(!p||!$('peEnabled'))return;p.enabled=$('peEnabled').checked;p.autoVisit=$('peAuto').checked;p.tope=Number($('peTope').value||0);p.weight=Number($('peWeight').value||0);p.priority=Number($('pePriority').value||30);p.recentAvoid=Number($('peRecent').value||0);p.numberEmotions=p.numberEmotions||{};document.querySelectorAll('[data-pe]').forEach(e=>{if(e.value)p.numberEmotions[e.dataset.pe]=e.value;else delete p.numberEmotions[e.dataset.pe]})}
+window.poolTopChanged=()=>{capturePool();renderPoolEditor()};
+window.renderJackMap=()=>{
+  if(!cfg)return;cfg.pools.jack.tope=Math.max(0,Number($('jackTope').value||0));const top=cfg.pools.jack.tope,host=$('jackMap');if(!top){host.innerHTML='<div class="small">Pon el tope según los archivos 1.mp3…N.mp3 de audio/jack/.</div>';return}const ass=cfg.jackRouting?.assignments||{},fixed=cfg.pools.jack.numberEmotions||{};let h='';for(let n=1;n<=top;n++){const lv=ass[String(n)]||[];const opts=['<option value="">Automática</option>',...ANIMS.map(a=>`<option value="${a}" ${fixed[String(n)]===a?'selected':''}>${a}</option>`)].join('');h+=`<div class="audio-row"><b>${n}.mp3</b><div class="checks">${['N1','N2','N3','N4'].map(x=>`<label class="check"><input data-ja="${n}" value="${x}" type="checkbox" ${lv.includes(x)?'checked':''}>${x}</label>`).join('')}</div><select data-je="${n}">${opts}</select></div>`}host.innerHTML=h;
+};
+function captureJack(){if(!cfg)return;cfg.pools.jack.tope=Number($('jackTope').value||0);cfg.pools.jack.recentAvoid=Number($('jackRecent').value||0);cfg.jackRouting=cfg.jackRouting||{assignments:{}};cfg.jackRouting.fallbackAnyWhenUnassigned=$('jackFallback').checked;cfg.jackRouting.assignments={};document.querySelectorAll('[data-ja]:checked').forEach(e=>(cfg.jackRouting.assignments[e.dataset.ja]??=[]).push(e.value));cfg.pools.jack.numberEmotions=cfg.pools.jack.numberEmotions||{};document.querySelectorAll('[data-je]').forEach(e=>{if(e.value)cfg.pools.jack.numberEmotions[e.dataset.je]=e.value;else delete cfg.pools.jack.numberEmotions[e.dataset.je]})}
+window.saveAdvanced=()=>{if(!cfg)return;capturePool();captureJack();cfg.options.interMinSec=Number($('interMin').value);cfg.options.interMaxSec=Number($('interMax').value);cfg.options.farewellDelaySec=Number($('farewell').value);cfg.options.maxInterventionsPerVisit=Number($('maxInter').value);cfg.options.contextDurationSec=Number($('ctxDur').value);cfg.options.contextBoost=Number($('ctxBoost').value);cfg.browserSpeech=cfg.browserSpeech||{};cfg.browserSpeech.enabled=$('speechEnabled').checked;cfg.browserSpeech.familiar=$('speechFam').value.split(/\r?\n/).map(x=>x.trim()).filter(Boolean);cfg.browserSpeech.troll=$('speechTroll').value.split(/\r?\n/).map(x=>x.trim()).filter(Boolean);const out=clone(cfg);delete out.reportedAt;send('apply_config',{config:out})};
+window.reloadCfg=()=>send('get_config',{});
+buttons();
+onAuthStateChanged(auth,u=>{firebaseOk=!!u;log(u?'Firebase autenticado':'Firebase sin auth')});
+await signInAnonymously(auth);
+onValue(ref(db,`${ROOT}/devices/${DEVICE}/state`),snap=>{state=snap.val()||{};paintState()});
+onValue(ref(db,`${ROOT}/devices/${DEVICE}/config`),snap=>{const x=snap.val();if(x){cfg=x;fillAdvanced();log('← configuración A2 actualizada')}});
+onChildAdded(ref(db,`${ROOT}/acks/${DEVICE}`),snap=>{const a=snap.val()||{};log(`ACK ${a.type||'?'} · ${a.status||'?'}`)});
+</script>
+</body></html>
