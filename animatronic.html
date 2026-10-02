@@ -363,6 +363,10 @@
   .adv-row input[type="time"], .adv-row input[type="number"], .adv-row select {
     background:#050505; border:1px solid #333; color:#ddd; border-radius:4px; padding:7px; font-family:inherit; min-width:110px;
   }
+  .adv-textarea {
+    width:100%; min-height:125px; resize:vertical; background:#050505; border:1px solid #333;
+    color:#ddd; border-radius:4px; padding:8px; font-family:inherit; font-size:10px; line-height:1.45;
+  }
   .adv-check { display:inline-flex; align-items:center; gap:5px; padding:5px 7px; border:1px solid #282828; border-radius:5px; margin:3px 2px; font-size:9px; color:#aaa; }
   .adv-check input { accent-color:var(--accent); }
   .adv-emotions { display:flex; flex-wrap:wrap; gap:2px; margin-top:5px; }
@@ -561,44 +565,30 @@ const S = {
 
 const ANIMS = ['idle','blink','happy','angry','furia','sad','surprised','sleepy','suspicious','evil','possessed','spin','glitch','dead','wink','curioso','riendo','alerta','siniestro','escalofrio','travieso','estatico','membrana','obturador'];
 
-// ── FRASES DE SALUDO / DESPEDIDA (fijas, sin editor en pantalla) ──
-// cada 'key' busca primero audio/<key>.mp3; si no existe, cae a ElevenLabs en vivo, luego voz navegador.
-const GREETINGS = {
+// ── FRASES EDITABLES PARA SÍNTESIS DEL NAVEGADOR ──
+// La síntesis queda APAGADA por defecto. Estas frases sólo se usan si se activa
+// explícitamente como respaldo. Una frase se elige al azar según el modo activo.
+const DEFAULT_BROWSER_SPEECH_PHRASES = {
   familiar: [
-    { key: 'familiar_saludo_01', text: 'Te puedo ver... no corras, apenas empezamos.', emo: 'suspicious' },
-    { key: 'familiar_saludo_02', text: 'Ya te vi...', emo: 'suspicious' },
-    { key: 'familiar_saludo_03', text: 'Te miro el alma... y también si traes cambio para el dulce.', emo: 'evil' },
-    { key: 'familiar_saludo_04', text: 'Oh, un visitante. Hacía años que no parpadeaba de la emoción.', emo: 'happy' },
-    { key: 'familiar_saludo_05', text: 'Un alma más se acerca al puesto.', emo: 'possessed' },
-    { key: 'familiar_saludo_06', text: '¿Buscas ofertas o buscas problemas? Aquí hay de los dos.', emo: 'curioso' },
-    { key: 'familiar_saludo_07', text: 'No hay descuentos, pero sí sustos gratis.', emo: 'riendo' },
-    { key: 'familiar_saludo_08', text: 'Alguien despertó a la máscara. Espero que no te arrepientas.', emo: 'glitch' },
+    'Te puedo ver... no corras, apenas empezamos.',
+    'Ya te vi...',
+    'Te miro el alma... y también si traes cambio para el dulce.',
+    'Oh, un visitante. Hacía años que no parpadeaba de la emoción.',
+    'Un alma más se acerca al puesto.',
+    '¿Buscas ofertas o buscas problemas? Aquí hay de los dos.',
+    'No hay descuentos, pero sí sustos gratis.',
+    'Alguien despertó a la máscara. Espero que no te arrepientas.'
   ],
   troll: [
-    { key: 'troll_saludo_01', text: 'Ay no, otro que viene a grabar video en vez de comprar.', emo: 'evil' },
-    { key: 'troll_saludo_02', text: '¡Desde aquí te veo!... No me mires tan fijamente que... ¡me chiveo!', emo: 'happy' },
-    { key: 'troll_saludo_03', text: '¡Ay, jijo! Qué modito de asustar... ¡Ah, no, perdón! Es tu cara normal. ¡Pásale, pásale, carnal, estás en tu casa!', emo: 'riendo' },
-    { key: 'troll_saludo_04', text: '¡Pero qué veo!... ¿Carne fresca?....... ¡Ah, no, qué susto, eres un cliente! ¡Bienvenido al changarro!', emo: 'possessed' },
-    { key: 'troll_saludo_05', text: 'Percibo un alma… y detecto peligro… para tu cartera.', emo: 'possessed' },
-    { key: 'troll_saludo_06', text: 'Efecto poltergeist.', emo: 'glitch' },
-    { key: 'troll_saludo_07', text: 'Bienvenido a tu peor pesadilla.', emo: 'angry' },
-    { key: 'troll_saludo_08', text: '¡Mira, mira! Otro valiente… hasta que vea los precios.', emo: 'curioso' },
-  ],
-};
-
-const FAREWELLS = {
-  familiar: [
-    { key: 'familiar_despedida_01', text: '¿Ya te vas? Yo sigo aquí... siempre.', emo: 'sleepy' },
-    { key: 'familiar_despedida_02', text: 'Vuelve pronto, o no. Yo no decido eso.', emo: 'idle' },
-    { key: 'familiar_despedida_03', text: 'Se fue. Otra alma que escapa... por ahora.', emo: 'glitch' },
-  ],
-  troll: [
-    { key: 'troll_despedida_01', text: '¿Ya te vas? Qué rápido corren los valientes.', emo: 'riendo' },
-    { key: 'troll_despedida_02', text: 'No corras, carnal… ¡si apenas estamos empezando!', emo: 'evil' },
-    { key: 'troll_despedida_03', text: 'Se fue sin comprar nada. Clásico.', emo: 'possessed' },
-    { key: 'troll_despedida_04', text: '¡Fuga Fuga! ¡Que aquí espantan! !Viste mi cara y te asustaste, pero viste los precios y te infartaste!', emo: 'sleepy' },
-    { key: 'troll_despedida_05', text: 'Se fue. Otra alma que escapa... por ahora.', emo: 'sad' },
-  ],
+    'Ay no, otro que viene a grabar video en vez de comprar.',
+    '¡Desde aquí te veo!... No me mires tan fijamente que... ¡me chiveo!',
+    '¡Ay, jijo! Qué modito de asustar... ¡Ah, no, perdón! Es tu cara normal.',
+    '¡Pero qué veo!... ¿Carne fresca?... Ah, no, eres un cliente.',
+    'Percibo un alma... y detecto peligro... para tu cartera.',
+    'Efecto poltergeist.',
+    'Bienvenido a tu peor pesadilla.',
+    '¡Mira, mira! Otro valiente... hasta que vea los precios.'
+  ]
 };
 
 // ── CONFIG DE AUDIOS NUMERADOS: solo cambias el "tope" cuando subas más archivos ──
@@ -642,7 +632,7 @@ function safeMode(v){ return v==='familiar'||v==='troll'?v:''; }
 
 const DEFAULT_RUNTIME_CONFIG = {
   kind: CONFIG_KIND,
-  version: 3,
+  version: 4,
   mode: {
     forced: safeMode(localStorage.getItem('troll_mode_force') || ''),
     trollStart: '21:00',
@@ -660,6 +650,11 @@ const DEFAULT_RUNTIME_CONFIG = {
     farewellDelaySec: 1.6
   },
   audio: { masterVolume: S.volume },
+  browserSpeech: {
+    enabled: false,
+    familiar: [...DEFAULT_BROWSER_SPEECH_PHRASES.familiar],
+    troll: [...DEFAULT_BROWSER_SPEECH_PHRASES.troll]
+  },
   pools: Object.fromEntries(Object.entries(AUDIO_POOLS_CONFIG).map(([k,v])=>[k,{
     enabled: true,
     tope: Number(v.tope)||0,
@@ -683,9 +678,10 @@ function mergeRuntimeConfig(base, incoming){
   if(src.mode) Object.assign(out.mode,src.mode);
   if(src.options) Object.assign(out.options,src.options);
   if(src.audio) Object.assign(out.audio,src.audio);
+  if(src.browserSpeech) Object.assign(out.browserSpeech,src.browserSpeech);
   if(src.pools) for(const [k,v] of Object.entries(src.pools)) if(out.pools[k]&&v&&typeof v==='object') Object.assign(out.pools[k],v);
   if(src.jackEffects) for(const [k,v] of Object.entries(src.jackEffects)) if(out.jackEffects[k]&&v&&typeof v==='object') Object.assign(out.jackEffects[k],v);
-  out.kind=CONFIG_KIND; out.version=3;
+  out.kind=CONFIG_KIND; out.version=4;
   return out;
 }
 
@@ -703,6 +699,12 @@ function normalizeRuntimeConfig(cfg){
   if(out.options.interMaxSec < out.options.interMinSec) out.options.interMaxSec=out.options.interMinSec;
   out.options.farewellDelaySec=clampNum(out.options.farewellDelaySec,0.5,20,1.6);
   out.audio.masterVolume=clampNum(out.audio.masterVolume,0,1,0.7);
+  out.browserSpeech = (out.browserSpeech && typeof out.browserSpeech==='object') ? out.browserSpeech : cloneJson(DEFAULT_RUNTIME_CONFIG.browserSpeech);
+  out.browserSpeech.enabled=!!out.browserSpeech.enabled;
+  for(const mode of ['familiar','troll']){
+    const list=Array.isArray(out.browserSpeech[mode])?out.browserSpeech[mode]:[];
+    out.browserSpeech[mode]=list.map(x=>String(x||'').trim()).filter(Boolean).slice(0,100).map(x=>x.slice(0,400));
+  }
   for(const [k,p] of Object.entries(out.pools)){
     p.enabled=p.enabled!==false;
     p.tope=Math.max(0,Math.floor(Number(p.tope)||0));
@@ -784,7 +786,7 @@ function escAttr(v){ return String(v??'').replace(/&/g,'&amp;').replace(/"/g,'&q
 function ensureAdvancedOverlay(){
   if(document.getElementById('adv-config-overlay')) return;
   const d=document.createElement('div'); d.id='adv-config-overlay';
-  d.innerHTML=`<div class="adv-wrap"><div class="adv-head"><div class="adv-title">☠ CONFIGURACIÓN V2</div><button class="adv-btn" type="button" onclick="closeAdvancedConfig()">Cerrar</button></div><div id="adv-config-body"></div></div>`;
+  d.innerHTML=`<div class="adv-wrap"><div class="adv-head"><div class="adv-title">☠ CONFIGURACIÓN V2.3</div><button class="adv-btn" type="button" onclick="closeAdvancedConfig()">Cerrar</button></div><div id="adv-config-body"></div></div>`;
   document.body.appendChild(d);
 }
 let ADV_DRAFT = null;
@@ -881,6 +883,17 @@ function renderAdvancedConfig(){
       <div class="adv-muted">La bienvenida conserva el umbral actual probado (~0.18 s). El inter elige al azar entre las situaciones marcadas para uso automático.</div>
       <div class="adv-row"><label>Volumen maestro</label><div style="display:flex;align-items:center;gap:6px;min-width:180px"><input id="adv-master-volume" type="range" min="0" max="1" step="0.05" value="${c.audio.masterVolume}" style="flex:1" oninput="document.getElementById('adv-master-volume-label').textContent=Math.round(this.value*100)+'%'"><span id="adv-master-volume-label" class="adv-muted">${Math.round(c.audio.masterVolume*100)}%</span></div></div></div>
     </details>
+    <details class="adv-card"><summary><b>Síntesis del navegador · respaldo opcional</b></summary>
+      <div style="margin-top:10px">
+        <label class="adv-check"><input id="adv-browser-speech-enabled" type="checkbox" ${c.browserSpeech.enabled?'checked':''}>Activar voz sintetizada del navegador</label>
+        <div class="adv-muted" style="margin:7px 0">Está apagada por defecto. Orden de respaldo: audio de su carpeta → síntesis (sólo si la activas) → Efectos de terror como último recurso. Las frases se eligen al azar y se guardan en la configuración.</div>
+        <div class="adv-grid2">
+          <div><div class="adv-pool-name" style="margin:6px 0">Frases · Familiar</div><textarea id="adv-browser-speech-familiar" class="adv-textarea" placeholder="Una frase por línea">${escAttr((c.browserSpeech.familiar||[]).join('\n'))}</textarea></div>
+          <div><div class="adv-pool-name" style="margin:6px 0">Frases · Troll</div><textarea id="adv-browser-speech-troll" class="adv-textarea" placeholder="Una frase por línea">${escAttr((c.browserSpeech.troll||[]).join('\n'))}</textarea></div>
+        </div>
+        <div class="adv-actions"><button class="adv-btn" type="button" onclick="testBrowserSpeechFromAdvanced()">▶ Probar síntesis</button></div>
+      </div>
+    </details>
     <details class="adv-card" open><summary><b>Situaciones / carpetas de audio</b></summary>
       <div style="margin-top:10px"><div class="adv-muted">Una sola plantilla: elige la situación y cambian sus valores y palomitas.</div>
       <div class="adv-row"><label>Situación</label><select id="adv-pool-select" onchange="changeAdvancedPool(this.value)">${poolSelector}</select></div>
@@ -937,10 +950,25 @@ function readAdvancedConfig(){
   c.options.interMaxSec=Number(document.getElementById('adv-inter-max')?.value ?? c.options.interMaxSec);
   c.options.farewellDelaySec=Number(document.getElementById('adv-farewell-delay')?.value ?? c.options.farewellDelaySec);
   c.audio.masterVolume=Number(document.getElementById('adv-master-volume')?.value ?? c.audio.masterVolume);
+  c.browserSpeech.enabled=!!document.getElementById('adv-browser-speech-enabled')?.checked;
+  c.browserSpeech.familiar=String(document.getElementById('adv-browser-speech-familiar')?.value||'').split(/\r?\n/).map(x=>x.trim()).filter(Boolean);
+  c.browserSpeech.troll=String(document.getElementById('adv-browser-speech-troll')?.value||'').split(/\r?\n/).map(x=>x.trim()).filter(Boolean);
   ADV_DRAFT=normalizeRuntimeConfig(c);
   return cloneJson(ADV_DRAFT);
 }
 function saveAdvancedConfig(){ RUNTIME_CONFIG=readAdvancedConfig(); applyRuntimeConfig(true); ADV_DRAFT=currentConfigSnapshot(); advStatus('Configuración guardada y aplicada.'); renderAdvancedConfig(); }
+function testBrowserSpeechFromAdvanced(){
+  try{
+    const temp=readAdvancedConfig();
+    const mode=getActiveMode();
+    const list=temp.browserSpeech?.[mode]||[];
+    if(!temp.browserSpeech?.enabled){ advStatus('La síntesis está desactivada. Actívala para probar.',false); return; }
+    if(!list.length){ advStatus(`No hay frases para modo ${mode}.`,false); return; }
+    const phrase=list[Math.floor(Math.random()*list.length)];
+    const ok=speakPhrase(phrase);
+    advStatus(ok?`Síntesis de prueba · ${mode}`:'El navegador no pudo iniciar la síntesis.',!!ok);
+  }catch(e){advStatus(e.message,false);}
+}
 async function testPoolFromAdvanced(){
   try{ const temp=readAdvancedConfig(); const old=RUNTIME_CONFIG; RUNTIME_CONFIG=temp; applyRuntimeConfig(false); const name=ADV_POOL_SELECTED; const ok=await tryPlayFromPool(name); RUNTIME_CONFIG=old; applyRuntimeConfig(false); if(!ok) advStatus(`No se pudo reproducir ${POOL_LABELS[name]||name}; revisa tope/archivos.`,false); else advStatus(`Prueba enviada: ${POOL_LABELS[name]||name}`); }
   catch(e){advStatus(e.message,false);}
@@ -976,10 +1004,10 @@ async function triggerJackLevel(level){
 
 // API única preparada para Firebase/ERP. La integración futura debe usar esta puerta.
 window.AnimatronicAPI = {
-  getState(){ return {speaking:S.speaking,faceTracking:S.faceTracking,animation:S.anim,mode:getActiveMode(),modeForced:RUNTIME_CONFIG.mode.forced||'',autoGreet:S.autoGreet,autoFarewell:S.autoFarewell,autoInterVisit:RUNTIME_CONFIG.options.autoInterVisit,promosEnabled:S.promosEnabled,volume:S.volume,configVersion:RUNTIME_CONFIG.version}; },
+  getState(){ return {speaking:S.speaking,faceTracking:S.faceTracking,animation:S.anim,mode:getActiveMode(),modeForced:RUNTIME_CONFIG.mode.forced||'',autoGreet:S.autoGreet,autoFarewell:S.autoFarewell,autoInterVisit:RUNTIME_CONFIG.options.autoInterVisit,promosEnabled:S.promosEnabled,browserSpeechEnabled:RUNTIME_CONFIG.browserSpeech.enabled,volume:S.volume,configVersion:RUNTIME_CONFIG.version}; },
   getConfig(){ return currentConfigSnapshot(); },
   setMode(mode){ setTrollMode(mode||''); return this.getState(); },
-  setOption(name,value){ if(name==='autoGreet')setAutoGreet(value); else if(name==='autoFarewell')setAutoFarewell(value); else if(name==='autoInterVisit'){ RUNTIME_CONFIG.options.autoInterVisit=!!value; applyRuntimeConfig(true); } else if(name==='promosEnabled')setPromosEnabled(value); else if(name==='faceTracking'){ if(value&&!S.faceTracking)startFaceTracking(); if(!value&&S.faceTracking)stopFaceTracking(); } else throw new Error('Opción remota no permitida'); return this.getState(); },
+  setOption(name,value){ if(name==='autoGreet')setAutoGreet(value); else if(name==='autoFarewell')setAutoFarewell(value); else if(name==='autoInterVisit'){ RUNTIME_CONFIG.options.autoInterVisit=!!value; applyRuntimeConfig(true); } else if(name==='promosEnabled')setPromosEnabled(value); else if(name==='browserSpeechEnabled'){ RUNTIME_CONFIG.browserSpeech.enabled=!!value; applyRuntimeConfig(true); } else if(name==='faceTracking'){ if(value&&!S.faceTracking)startFaceTracking(); if(!value&&S.faceTracking)stopFaceTracking(); } else throw new Error('Opción remota no permitida'); return this.getState(); },
   setPoolConfig(name,patch){ if(!RUNTIME_CONFIG.pools[name])throw new Error('Carpeta desconocida'); RUNTIME_CONFIG.pools[name]=Object.assign({},RUNTIME_CONFIG.pools[name],patch||{}); applyRuntimeConfig(true); return cloneJson(RUNTIME_CONFIG.pools[name]); },
   triggerEmotion(name){ if(!ANIMS.includes(name))throw new Error('Emoción desconocida'); setEmotion(name); return {ok:true,animation:S.anim}; },
   triggerCategory(name){ if(!AUDIO_POOLS_CONFIG[name])throw new Error('Categoría desconocida'); return speakFromCategory(name); },
@@ -988,7 +1016,7 @@ window.AnimatronicAPI = {
 };
 
 // ── FRASES FIJAS DE MAYOR PESO (promociones), por categoría ──
-// weight: 3 significa que suena ~3 veces más seguido que un audio normal de esa carpeta.
+// weight: 3 conserva mayor peso: equivale aproximadamente a 3 audios normales individuales de esa carpeta.
 // se pueden apagar todas juntas desde Config (S.promosEnabled).
 const CATEGORY_PROMOS = {
   situ_mascaras: [
@@ -1265,59 +1293,27 @@ function maybeTriggerPresenceEvents(faceDetected) {
   }
 }
 
-function pickPhrase(list, stateKey) {
-  if (list.length === 1) return list[0];
-  let idx = Math.floor(Math.random() * list.length);
-  while (idx === S[stateKey]) idx = Math.floor(Math.random() * list.length);
-  S[stateKey] = idx;
-  return list[idx];
-}
-
-// dispara saludo/despedida sorteando entre 3 tipos de respuesta:
-// 1) promo (peso alto, si está activada)  2) frase escrita (GREETINGS/FAREWELLS)
-// 3) audio numerado de su carpeta (greet_familiar, greet_troll, etc.) con emoción propia
-async function triggerScripted(scriptedList, poolName, stateKey) {
-  const mode = getActiveMode();
-  const list = scriptedList[mode];
-  const promos = (S.promosEnabled ?? true) ? (CATEGORY_PROMOS[poolName] || []) : [];
-  const poolCfg = AUDIO_POOLS_CONFIG[poolName] || {};
-
-  const scriptedWeight = list.length;
-  const poolWeight = poolCfg.enabled === false ? 0 : (poolCfg.tope || 0);
-  const promoWeight = promos.reduce((sum, p) => sum + (p.weight || 1), 0);
-  const total = scriptedWeight + poolWeight + promoWeight;
-  if (total === 0) return;
-
-  let roll = Math.random() * total;
-
-  for (const p of promos) {
-    const w = p.weight || 1;
-    if (roll < w) { playLine(p.key, p.text, p.emo); return; }
-    roll -= w;
-  }
-
-  if (roll < scriptedWeight) {
-    const p = pickPhrase(list, stateKey);
-    playLine(p.key, p.text, p.emo);
-    return;
-  }
-
+// ── SALUDO / DESPEDIDA: sólo pools numerados + respaldo configurable ──
+// Ya no se mezclan frases escritas fijas con los pools. Así, si greet_familiar/greet_troll
+// tienen audios 1.mp3..tope, siempre se elige uno de esos archivos al azar.
+async function playPoolWithEmergencyFallback(poolName) {
   const ok = await tryPlayFromPool(poolName);
-  if (!ok) {
-    // no había audio numerado disponible todavía: cae a una frase escrita, nunca se queda muda
-    const p = pickPhrase(list, stateKey);
-    playLine(p.key, p.text, p.emo);
-  }
+  if(ok) return true;
+  const ttsOk = tryBrowserSpeechRandom();
+  if(ttsOk) return true;
+  // Último recurso real: carpeta de efectos.
+  if(poolName !== 'fx_terror') return await tryPlayFromPool('fx_terror');
+  return false;
 }
 
 function triggerGreeting() {
   const mode = getActiveMode();
-  triggerScripted(GREETINGS, 'greet_' + mode, 'lastGreetIdx_' + mode);
+  playPoolWithEmergencyFallback('greet_' + mode);
 }
 
 function triggerFarewell() {
   const mode = getActiveMode();
-  triggerScripted(FAREWELLS, 'despedida_' + mode, 'lastFarewellIdx_' + mode);
+  playPoolWithEmergencyFallback('despedida_' + mode);
 }
 
 // ── EYE RENDERER ──
@@ -1984,19 +1980,36 @@ window.reaccionar = function(nombreEmocion) {
 
 function setVolume(v) { setMasterVolume(v); }
 
-// ── SPEECH SYNTHESIS ──
+// ── SÍNTESIS DEL NAVEGADOR · RESPALDO OPCIONAL ──
+let LAST_BROWSER_SPEECH = { familiar:-1, troll:-1 };
 function speakPhrase(text) {
-  if(!window.speechSynthesis) return;
-  window.speechSynthesis.cancel();
-  const utt = new SpeechSynthesisUtterance(text);
-  utt.lang = 'es-MX';
-  utt.rate = 0.75;
-  utt.pitch = 0.4;
-  utt.volume = S.volume;
-  const ind = document.getElementById('voice-indicator');
-  utt.onstart = () => { ind.classList.add('active'); S.speaking=true; };
-  utt.onend = () => { ind.classList.remove('active'); S.speaking=false; };
-  window.speechSynthesis.speak(utt);
+  text=String(text||'').trim();
+  if(!text || !window.speechSynthesis) return false;
+  try{
+    window.speechSynthesis.cancel();
+    const utt = new SpeechSynthesisUtterance(text);
+    utt.lang = 'es-MX';
+    utt.rate = 0.75;
+    utt.pitch = 0.4;
+    utt.volume = S.volume;
+    const ind = document.getElementById('voice-indicator');
+    utt.onstart = () => { ind.classList.add('active'); S.speaking=true; };
+    utt.onend = () => { ind.classList.remove('active'); S.speaking=false; };
+    utt.onerror = () => { ind.classList.remove('active'); S.speaking=false; };
+    window.speechSynthesis.speak(utt);
+    return true;
+  }catch(e){ console.warn('Síntesis navegador:',e); return false; }
+}
+
+function tryBrowserSpeechRandom(){
+  if(!RUNTIME_CONFIG?.browserSpeech?.enabled || S.speaking) return false;
+  const mode=getActiveMode();
+  const list=(RUNTIME_CONFIG.browserSpeech[mode]||[]).map(x=>String(x||'').trim()).filter(Boolean);
+  if(!list.length) return false;
+  let idx=Math.floor(Math.random()*list.length);
+  if(list.length>1 && idx===LAST_BROWSER_SPEECH[mode]) idx=(idx+1+Math.floor(Math.random()*(list.length-1)))%list.length;
+  LAST_BROWSER_SPEECH[mode]=idx;
+  return speakPhrase(list[idx]);
 }
 
 function playAudioEl(audio, volumeMultiplier=1) {
@@ -2016,14 +2029,13 @@ function tryPlayLocalFile(src, volumeMultiplier=1) {
   });
 }
 
-// dispara una frase: mp3 específico → efecto de terror aleatorio (carpeta audio/fx_terror) → voz robótica
+// dispara una línea especial: mp3 específico → síntesis opcional → efectos como ÚLTIMO recurso
 async function playLine(cacheKey, text, emotion) {
   if(emotion) setEmotion(emotion);
   const ok = await tryPlayLocalFile(`audio/${cacheKey}.mp3`);
-  if(ok) return;
-  const fxOk = await tryPlayFromPool('fx_terror');
-  if(fxOk) return;
-  speakPhrase(text);
+  if(ok) return true;
+  if(tryBrowserSpeechRandom()) return true;
+  return await tryPlayFromPool('fx_terror');
 }
 
 // ── MOTOR DE AUDIOS NUMERADOS (situaciones / efectos) ──
@@ -2071,19 +2083,24 @@ async function speakFromCategory(categoria, emocionSiFalla) {
   const promoWeight = promos.reduce((sum, p) => sum + (p.weight || 1), 0);
   const poolWeight = cfg.enabled === false ? 0 : (cfg.tope || 0);
   const total = promoWeight + poolWeight;
-  if (total === 0) return;
+  if (total === 0) {
+    if (tryBrowserSpeechRandom()) return true;
+    return await tryPlayFromPool('fx_terror');
+  }
 
   let roll = Math.random() * total;
   for (const p of promos) {
     const w = p.weight || 1;
-    if (roll < w) { playLine(p.key, p.text, p.emo); return; }
+    if (roll < w) { return await playLine(p.key, p.text, p.emo); }
     roll -= w;
   }
   const ok = await tryPlayFromPool(categoria);
   if (!ok) {
     if (emocionSiFalla) setEmotion(emocionSiFalla);
-    await tryPlayFromPool('fx_terror');
+    if (tryBrowserSpeechRandom()) return true;
+    return await tryPlayFromPool('fx_terror');
   }
+  return true;
 }
 
 // ── WAKE LOCK: pantalla nunca se apaga mientras la app está visible ──
