@@ -1112,10 +1112,11 @@ async function triggerJackLevel(level){
 
 // API única preparada para Firebase/ERP. La integración futura debe usar esta puerta.
 window.AnimatronicAPI = {
-  getState(){ return {speaking:S.speaking,faceTracking:S.faceTracking,animation:S.anim,mode:getActiveMode(),modeForced:RUNTIME_CONFIG.mode.forced||'',autoGreet:S.autoGreet,autoFarewell:S.autoFarewell,autoInterVisit:RUNTIME_CONFIG.options.autoInterVisit,promosEnabled:S.promosEnabled,browserSpeechEnabled:RUNTIME_CONFIG.browserSpeech.enabled,volume:S.volume,configVersion:RUNTIME_CONFIG.version,visitState:VISIT_RUNTIME.state,visitInterventions:VISIT_RUNTIME.interventions,maxInterventions:RUNTIME_CONFIG.options.maxInterventionsPerVisit,contextPool:activeVisitContextPool(),contextRemainingSec:visitContextRemainingSec(),silenceRemainingSec:muteRemainingSec(),lastAudio:LAST_AUDIO_INFO.src||'',lastEffect:LAST_EFFECT||''}; },
+  getState(){ return {speaking:S.speaking,faceTracking:S.faceTracking,animation:S.anim,autoMode:S.autoMode,speed:S.speed,transDuration:S.transDuration,mode:getActiveMode(),modeForced:RUNTIME_CONFIG.mode.forced||'',autoGreet:S.autoGreet,autoFarewell:S.autoFarewell,autoInterVisit:RUNTIME_CONFIG.options.autoInterVisit,promosEnabled:S.promosEnabled,browserSpeechEnabled:RUNTIME_CONFIG.browserSpeech.enabled,volume:S.volume,configVersion:RUNTIME_CONFIG.version,visitState:VISIT_RUNTIME.state,visitInterventions:VISIT_RUNTIME.interventions,maxInterventions:RUNTIME_CONFIG.options.maxInterventionsPerVisit,contextPool:activeVisitContextPool(),contextRemainingSec:visitContextRemainingSec(),silenceRemainingSec:muteRemainingSec(),lastAudio:LAST_AUDIO_INFO.src||'',lastEffect:LAST_EFFECT||''}; },
   getConfig(){ return currentConfigSnapshot(); },
   setMode(mode){ setTrollMode(mode||''); return this.getState(); },
-  setOption(name,value){ if(name==='autoGreet')setAutoGreet(value); else if(name==='autoFarewell')setAutoFarewell(value); else if(name==='autoInterVisit'){ RUNTIME_CONFIG.options.autoInterVisit=!!value; applyRuntimeConfig(true); } else if(name==='promosEnabled')setPromosEnabled(value); else if(name==='browserSpeechEnabled'){ RUNTIME_CONFIG.browserSpeech.enabled=!!value; applyRuntimeConfig(true); } else if(name==='faceTracking'){ if(value&&!S.faceTracking)startFaceTracking(); if(!value&&S.faceTracking)stopFaceTracking(); } else throw new Error('Opción remota no permitida'); return this.getState(); },
+  setOption(name,value){ if(name==='autoGreet')setAutoGreet(value); else if(name==='autoFarewell')setAutoFarewell(value); else if(name==='autoInterVisit'){ RUNTIME_CONFIG.options.autoInterVisit=!!value; applyRuntimeConfig(true); } else if(name==='promosEnabled')setPromosEnabled(value); else if(name==='browserSpeechEnabled'){ RUNTIME_CONFIG.browserSpeech.enabled=!!value; applyRuntimeConfig(true); } else if(name==='faceTracking'){ if(value&&!S.faceTracking)startFaceTracking(); if(!value&&S.faceTracking)stopFaceTracking(); } else if(name==='autoMode'){ const want=!!value; if(want!==S.autoMode)toggleAuto(); } else throw new Error('Opción remota no permitida'); return this.getState(); },
+  setRuntime(patch){ patch=patch&&typeof patch==='object'?patch:{}; if(patch.speed!==undefined)setSpeed(Math.max(0.4,Math.min(2.5,Number(patch.speed)||1))); if(patch.transDuration!==undefined)setTransDuration(Math.max(0,Math.min(1.5,Number(patch.transDuration)||0))); if(patch.volume!==undefined)setMasterVolume(Math.max(0,Math.min(1,Number(patch.volume)||0))); return this.getState(); },
   setPoolConfig(name,patch){ if(!RUNTIME_CONFIG.pools[name])throw new Error('Carpeta desconocida'); RUNTIME_CONFIG.pools[name]=Object.assign({},RUNTIME_CONFIG.pools[name],patch||{}); applyRuntimeConfig(true); return cloneJson(RUNTIME_CONFIG.pools[name]); },
   setVisitContext(name,durationSec,nextOnly=false){ return setVisitContext(name,durationSec,nextOnly); },
   clearVisitContext(){ clearVisitContext(); return this.getState(); },
@@ -2446,6 +2447,9 @@ async function executeCommand(id, cmd){
       break;
     case 'option':
       result=window.AnimatronicAPI.setOption(String(payload.name||''),payload.value);
+      break;
+    case 'runtime':
+      result=window.AnimatronicAPI.setRuntime(payload);
       break;
     case 'category':
       if(window.getAnimatronicRemoteState().speaking) return {status:'busy',reason:'speaking'};
