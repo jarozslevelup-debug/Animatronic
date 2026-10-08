@@ -1435,7 +1435,7 @@ function renderToday(){
       row.innerHTML =
         '<div class="sale-left">' +
           (s.foto ? '<img src="' + s.foto + '" style="width:38px;height:38px;border-radius:8px;object-fit:cover;">' : '') +
-          '<div><div class="sale-name"></div><div class="sale-meta"></div><div class="hold-delete-hint">Mantén presionado para opciones</div></div>' +
+          '<div><div class="sale-name"></div><div class="sale-meta"></div></div>' +
         '</div>' +
         '<div style="text-align:right;"><div class="sale-amount"></div><button class="sale-delete-unlocked" type="button">🗑 Eliminar</button></div>';
       row.querySelector(".sale-name").textContent = s.nombre;
@@ -1507,6 +1507,6 @@ boot();
 </script>
 <script src="folios_v2.js?v=2"></script>
 <script src="qrcode_hw.js?v=1"></script>
-<script src="halloween.js?v=0.4.4"></script>
+<script src="halloween.js?v=0.4.5"></script>
 </body>
 </html>
