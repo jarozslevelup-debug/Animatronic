@@ -624,6 +624,19 @@ const POOL_LABELS = {
   fx_terror:'Efectos de terror', greet_familiar:'Saludo familiar', greet_troll:'Saludo troll',
   despedida_familiar:'Despedida familiar', despedida_troll:'Despedida troll'
 };
+const POOL_ICONS = {
+  situ_mascaras:'🎭', situ_indeciso:'🤔', situ_fiado:'🧾', situ_regateo:'💸', situ_venta:'💰', situ_album:'📕', situ_chiste:'😈'
+};
+const BUILTIN_POOL_KEYS = new Set(Object.keys(AUDIO_POOLS_CONFIG));
+function isDynamicSituKey(k){ return /^situ_[a-z0-9_]{1,48}$/.test(String(k||'')); }
+function safePoolFolder(v,k){
+  let x=String(v||`audio/${k}`).trim().replace(/\\/g,'/');
+  if(!x.startsWith('audio/') || x.includes('..') || !/^audio\/[A-Za-z0-9_./-]+$/.test(x)) x=`audio/${k}`;
+  return x.slice(0,160);
+}
+function safePoolLabel(v,k){ const x=String(v||POOL_LABELS[k]||k.replace(/^situ_/,'').replace(/_/g,' ')).trim(); return (x||k).slice(0,60); }
+function safePoolIcon(v,k){ return String(v||POOL_ICONS[k]||'🎭').trim().slice(0,8); }
+function poolLabel(k){ const p=RUNTIME_CONFIG?.pools?.[k]; return p?.label||POOL_LABELS[k]||k; }
 const JACK_LEVEL_LABELS = { N1:'N1 · $50–99', N2:'N2 · $100–149', N3:'N3 · $150–299', N4:'N4 · $300+' };
 
 function cloneJson(v){ return JSON.parse(JSON.stringify(v)); }
@@ -633,7 +646,7 @@ function safeMode(v){ return v==='familiar'||v==='troll'?v:''; }
 
 const DEFAULT_RUNTIME_CONFIG = {
   kind: CONFIG_KIND,
-  version: 5,
+  version: 6,
   mode: {
     forced: safeMode(localStorage.getItem('troll_mode_force') || ''),
     trollStart: '21:00',
@@ -659,7 +672,7 @@ const DEFAULT_RUNTIME_CONFIG = {
     familiar: [...DEFAULT_BROWSER_SPEECH_PHRASES.familiar],
     troll: [...DEFAULT_BROWSER_SPEECH_PHRASES.troll]
   },
-  pools: Object.fromEntries(Object.entries(AUDIO_POOLS_CONFIG).map(([k,v])=>[k,{
+  pools: Object.fromEntries(Object.entries(AUDIO_POOLS_CONFIG).map(([k,v],idx)=>[k,{
     enabled: true,
     tope: Number(v.tope)||0,
     emotions: [...(v.emotions||[])],
@@ -669,7 +682,13 @@ const DEFAULT_RUNTIME_CONFIG = {
     weight: (k==='situ_album'?5:(k==='situ_chiste'?2:1)),
     recentAvoid: 2,
     // Sólo las situaciones marcadas pueden entrar solas durante una visita.
-    autoVisit: (k==='situ_album' || k==='situ_chiste')
+    autoVisit: (k==='situ_album' || k==='situ_chiste'),
+    folder: v.folder,
+    label: POOL_LABELS[k]||k,
+    icon: POOL_ICONS[k]||'',
+    showInSales: ['situ_album','situ_mascaras','situ_indeciso','situ_chiste'].includes(k),
+    salesAction: 'now',
+    salesOrder: ({situ_album:1,situ_mascaras:2,situ_indeciso:3,situ_chiste:4}[k] ?? (50+idx))
   }])),
   jackEffects: {
     N1:{enabled:true,pool:'jack',emotions:['happy','curioso'],priority:60},
@@ -690,10 +709,17 @@ function mergeRuntimeConfig(base, incoming){
   if(src.options) Object.assign(out.options,src.options);
   if(src.audio) Object.assign(out.audio,src.audio);
   if(src.browserSpeech) Object.assign(out.browserSpeech,src.browserSpeech);
-  if(src.pools) for(const [k,v] of Object.entries(src.pools)) if(out.pools[k]&&v&&typeof v==='object') Object.assign(out.pools[k],v);
+  if(src.pools) for(const [k,v] of Object.entries(src.pools)){
+    if(!v||typeof v!=='object') continue;
+    if(out.pools[k]) Object.assign(out.pools[k],v);
+    else if(isDynamicSituKey(k)) out.pools[k]={
+      enabled:true,tope:0,emotions:['curioso','happy'],numberEmotions:{},volume:1,priority:30,weight:1,recentAvoid:2,autoVisit:false,
+      folder:`audio/${k}`,label:k.replace(/^situ_/,'').replace(/_/g,' '),icon:'🎭',showInSales:false,salesAction:'now',salesOrder:99,...cloneJson(v)
+    };
+  }
   if(src.jackEffects) for(const [k,v] of Object.entries(src.jackEffects)) if(out.jackEffects[k]&&v&&typeof v==='object') Object.assign(out.jackEffects[k],v);
   if(src.jackRouting) Object.assign(out.jackRouting,src.jackRouting);
-  out.kind=CONFIG_KIND; out.version=5;
+  out.kind=CONFIG_KIND; out.version=6;
   return out;
 }
 
@@ -730,6 +756,12 @@ function normalizeRuntimeConfig(cfg){
     p.autoVisit=!!p.autoVisit;
     p.emotions=[...new Set((p.emotions||[]).filter(x=>ANIMS.includes(x)))];
     p.numberEmotions=(p.numberEmotions&&typeof p.numberEmotions==='object')?p.numberEmotions:{};
+    p.folder=safePoolFolder(p.folder,k);
+    p.label=safePoolLabel(p.label,k);
+    p.icon=safePoolIcon(p.icon,k);
+    p.showInSales=!!p.showInSales;
+    p.salesAction=['now','context','next'].includes(p.salesAction)?p.salesAction:'now';
+    p.salesOrder=Math.max(0,Math.min(999,Math.floor(Number(p.salesOrder)||99)));
   }
   for(const [k,j] of Object.entries(out.jackEffects)){
     j.enabled=j.enabled!==false;
@@ -770,8 +802,13 @@ function applyRuntimeConfig(persist=true){
   S.autoFarewell=RUNTIME_CONFIG.options.autoFarewell;
   S.promosEnabled=RUNTIME_CONFIG.options.promosEnabled;
   S.volume=RUNTIME_CONFIG.audio.masterVolume;
+  // Las situaciones creadas desde el control remoto son configuración, no lectura de carpetas.
+  // Al aplicar config reconstruimos sólo las dinámicas; las carpetas físicas nunca se borran.
+  for(const k of Object.keys(AUDIO_POOLS_CONFIG)) if(!BUILTIN_POOL_KEYS.has(k)) delete AUDIO_POOLS_CONFIG[k];
   for(const [k,cfg] of Object.entries(RUNTIME_CONFIG.pools)){
+    if(!AUDIO_POOLS_CONFIG[k] && isDynamicSituKey(k)) AUDIO_POOLS_CONFIG[k]={folder:safePoolFolder(cfg.folder,k),tope:0,emotions:['curioso','happy']};
     if(!AUDIO_POOLS_CONFIG[k]) continue;
+    AUDIO_POOLS_CONFIG[k].folder=safePoolFolder(cfg.folder||AUDIO_POOLS_CONFIG[k].folder,k);
     AUDIO_POOLS_CONFIG[k].enabled=cfg.enabled;
     AUDIO_POOLS_CONFIG[k].tope=cfg.tope;
     AUDIO_POOLS_CONFIG[k].emotions=[...cfg.emotions];
@@ -848,7 +885,7 @@ function renderPoolEditor(){
   ADV_POOL_SELECTED=k;
   const p=ADV_DRAFT.pools[k];
   host.innerHTML=`
-    <div class="adv-row"><div><div class="adv-pool-name">${POOL_LABELS[k]||k}</div><div class="adv-muted">${escAttr(AUDIO_POOLS_CONFIG[k]?.folder||'')}</div></div><label class="adv-check"><input id="adv-pool-enabled" type="checkbox" ${p.enabled?'checked':''}>Usar carpeta</label></div>
+    <div class="adv-row"><div><div class="adv-pool-name">${poolLabel(k)}</div><div class="adv-muted">${escAttr(p.folder||AUDIO_POOLS_CONFIG[k]?.folder||'')}</div></div><label class="adv-check"><input id="adv-pool-enabled" type="checkbox" ${p.enabled?'checked':''}>Usar carpeta</label></div>
     <label class="adv-check"><input id="adv-pool-auto-visit" type="checkbox" ${p.autoVisit?'checked':''}>Puede salir automáticamente a media visita</label>
     <div class="adv-grid2">
       <div class="adv-row"><label>Audios numerados / tope</label><input id="adv-pool-tope" type="number" min="0" step="1" value="${p.tope}" onchange="renderPoolAudioMapFromTop()"></div>
@@ -950,7 +987,7 @@ function renderAdvancedConfig(){
   ensureAdvancedOverlay();
   if(!ADV_DRAFT) ADV_DRAFT=currentConfigSnapshot();
   const c=ADV_DRAFT;
-  const poolSelector=Object.keys(c.pools).map(k=>`<option value="${k}" ${k===ADV_POOL_SELECTED?'selected':''}>${POOL_LABELS[k]||k}</option>`).join('');
+  const poolSelector=Object.keys(c.pools).map(k=>`<option value="${k}" ${k===ADV_POOL_SELECTED?'selected':''}>${poolLabel(k)}</option>`).join('');
   const jackSelector=Object.keys(c.jackEffects).map(k=>`<option value="${k}" ${k===ADV_JACK_SELECTED?'selected':''}>${JACK_LEVEL_LABELS[k]||k}</option>`).join('');
 
   document.getElementById('adv-config-body').innerHTML=`
@@ -1069,7 +1106,7 @@ function testBrowserSpeechFromAdvanced(){
   }catch(e){advStatus(e.message,false);}
 }
 async function testPoolFromAdvanced(){
-  try{ const temp=readAdvancedConfig(); const old=RUNTIME_CONFIG; RUNTIME_CONFIG=temp; applyRuntimeConfig(false); const name=ADV_POOL_SELECTED; const ok=await tryPlayFromPool(name); RUNTIME_CONFIG=old; applyRuntimeConfig(false); if(!ok) advStatus(`No se pudo reproducir ${POOL_LABELS[name]||name}; revisa tope/archivos.`,false); else advStatus(`Prueba enviada: ${POOL_LABELS[name]||name}`); }
+  try{ const temp=readAdvancedConfig(); const old=RUNTIME_CONFIG; RUNTIME_CONFIG=temp; applyRuntimeConfig(false); const name=ADV_POOL_SELECTED; const ok=await tryPlayFromPool(name); RUNTIME_CONFIG=old; applyRuntimeConfig(false); if(!ok) advStatus(`No se pudo reproducir ${poolLabel(name)}; revisa tope/archivos.`,false); else advStatus(`Prueba enviada: ${poolLabel(name)}`); }
   catch(e){advStatus(e.message,false);}
 }
 async function testJackFromAdvanced(){
@@ -1117,13 +1154,20 @@ window.AnimatronicAPI = {
   setMode(mode){ setTrollMode(mode||''); return this.getState(); },
   setOption(name,value){ if(name==='autoGreet')setAutoGreet(value); else if(name==='autoFarewell')setAutoFarewell(value); else if(name==='autoInterVisit'){ RUNTIME_CONFIG.options.autoInterVisit=!!value; applyRuntimeConfig(true); } else if(name==='promosEnabled')setPromosEnabled(value); else if(name==='browserSpeechEnabled'){ RUNTIME_CONFIG.browserSpeech.enabled=!!value; applyRuntimeConfig(true); } else if(name==='faceTracking'){ if(value&&!S.faceTracking)startFaceTracking(); if(!value&&S.faceTracking)stopFaceTracking(); } else if(name==='autoMode'){ const want=!!value; if(want!==S.autoMode)toggleAuto(); } else throw new Error('Opción remota no permitida'); return this.getState(); },
   setRuntime(patch){ patch=patch&&typeof patch==='object'?patch:{}; if(patch.speed!==undefined)setSpeed(Math.max(0.4,Math.min(2.5,Number(patch.speed)||1))); if(patch.transDuration!==undefined)setTransDuration(Math.max(0,Math.min(1.5,Number(patch.transDuration)||0))); if(patch.volume!==undefined)setMasterVolume(Math.max(0,Math.min(1,Number(patch.volume)||0))); return this.getState(); },
-  setPoolConfig(name,patch){ if(!RUNTIME_CONFIG.pools[name])throw new Error('Carpeta desconocida'); RUNTIME_CONFIG.pools[name]=Object.assign({},RUNTIME_CONFIG.pools[name],patch||{}); applyRuntimeConfig(true); return cloneJson(RUNTIME_CONFIG.pools[name]); },
+  setPoolConfig(name,patch){
+    name=String(name||'').trim();
+    if(!RUNTIME_CONFIG.pools[name]){
+      if(!isDynamicSituKey(name)) throw new Error('Carpeta desconocida');
+      RUNTIME_CONFIG.pools[name]={enabled:true,tope:0,emotions:['curioso','happy'],numberEmotions:{},volume:1,priority:30,weight:1,recentAvoid:2,autoVisit:false,folder:`audio/${name}`,label:name.replace(/^situ_/,'').replace(/_/g,' '),icon:'🎭',showInSales:false,salesAction:'now',salesOrder:99};
+    }
+    RUNTIME_CONFIG.pools[name]=Object.assign({},RUNTIME_CONFIG.pools[name],patch||{}); applyRuntimeConfig(true); return cloneJson(RUNTIME_CONFIG.pools[name]);
+  },
   setVisitContext(name,durationSec,nextOnly=false){ return setVisitContext(name,durationSec,nextOnly); },
   clearVisitContext(){ clearVisitContext(); return this.getState(); },
   silence(seconds=30){ silenceAnimatronic(seconds); return this.getState(); },
   resume(){ resumeAnimatronic(); return this.getState(); },
   triggerEmotion(name){ if(!ANIMS.includes(name))throw new Error('Emoción desconocida'); setEmotion(name); LAST_EFFECT=`Emoción ${name}`; return {ok:true,animation:S.anim}; },
-  triggerCategory(name){ if(!AUDIO_POOLS_CONFIG[name])throw new Error('Categoría desconocida'); LAST_EFFECT=`Situación ${POOL_LABELS[name]||name}`; return speakFromCategory(name); },
+  triggerCategory(name){ if(!AUDIO_POOLS_CONFIG[name])throw new Error('Categoría desconocida'); LAST_EFFECT=`Situación ${poolLabel(name)}`; return speakFromCategory(name); },
   triggerJackLevel(level){ return triggerJackLevel(level); },
   applyConfig(cfg){ RUNTIME_CONFIG=normalizeRuntimeConfig(cfg); applyRuntimeConfig(true); return this.getConfig(); }
 };
@@ -1351,7 +1395,7 @@ function setVisitContext(name,durationSec,nextOnly=false){
   name=String(name||''); if(!RUNTIME_CONFIG.pools[name] || !name.startsWith('situ_')) throw new Error('Contexto desconocido');
   const sec=clampNum(durationSec,5,600,RUNTIME_CONFIG.options.contextDurationSec||45);
   VISIT_RUNTIME.contextPool=name; VISIT_RUNTIME.contextUntil=performance.now()+sec*1000; VISIT_RUNTIME.contextNextOnly=!!nextOnly;
-  LAST_EFFECT=`Contexto ${POOL_LABELS[name]||name}`; return {ok:true,pool:name,durationSec:sec,nextOnly:!!nextOnly};
+  LAST_EFFECT=`Contexto ${poolLabel(name)}`; return {ok:true,pool:name,durationSec:sec,nextOnly:!!nextOnly};
 }
 function clearVisitContext(){ VISIT_RUNTIME.contextPool=''; VISIT_RUNTIME.contextUntil=0; VISIT_RUNTIME.contextNextOnly=false; }
 function isAnimMuted(){ return performance.now()<MUTE_UNTIL; }
@@ -1408,7 +1452,7 @@ async function triggerVisitIntermission(){
   visitInterBusy=true;
   try{
     const ok=await speakFromCategory(pool);
-    if(ok){ VISIT_RUNTIME.lastPool=pool; VISIT_RUNTIME.interventions++; LAST_EFFECT=`Inter ${POOL_LABELS[pool]||pool}`; }
+    if(ok){ VISIT_RUNTIME.lastPool=pool; VISIT_RUNTIME.interventions++; LAST_EFFECT=`Inter ${poolLabel(pool)}`; }
     return !!ok;
   }catch(e){ console.warn('Inter visita:',e); return false; }
   finally{ visitInterBusy=false; scheduleNextVisitInter(); }
