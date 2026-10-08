@@ -605,6 +605,7 @@ const AUDIO_POOLS_CONFIG = {
   situ_venta:    { folder: 'audio/situ_venta',    tope: 0, emotions: ['curioso','evil','glitch'] },
   situ_album:    { folder: 'audio/situ_album',    tope: 0, emotions: ['happy','curioso','siniestro','travieso'] },
   situ_chiste:   { folder: 'audio/situ_chiste',   tope: 0, emotions: ['riendo','travieso','curioso','evil'] },
+  situ_venta_cierre: { folder: 'audio/situ_venta_cierre', tope: 0, emotions: ['happy','curioso','travieso'], silentIfMissing:true },
   jack:          { folder: 'audio/jack',          tope: 0, emotions: ['happy','curioso','evil','possessed','siniestro','furia','glitch'] },
   fx_terror:     { folder: 'audio/fx_terror',     tope: 0, emotions: ['evil','glitch','possessed','estatico','membrana','furia'] },
   greet_familiar:     { folder: 'audio/greet_familiar',     tope: 0, emotions: ['happy','curioso','suspicious','travieso'] },
@@ -620,12 +621,12 @@ const CONFIG_STORAGE_KEY = 'animatronic_config_v2';
 const CONFIG_KIND = 'ANIMATRONIC_CONFIG_V2';
 const POOL_LABELS = {
   situ_mascaras:'Máscaras', situ_indeciso:'Indeciso', situ_fiado:'Fiado', situ_regateo:'Regateo', situ_venta:'Venta',
-  situ_album:'Álbum', situ_chiste:'Chiste / comentario', jack:'Jack · niveles',
+  situ_album:'Álbum', situ_chiste:'Chiste / comentario', situ_venta_cierre:'Agradecer / despedir', jack:'Jack · niveles',
   fx_terror:'Efectos de terror', greet_familiar:'Saludo familiar', greet_troll:'Saludo troll',
   despedida_familiar:'Despedida familiar', despedida_troll:'Despedida troll'
 };
 const POOL_ICONS = {
-  situ_mascaras:'🎭', situ_indeciso:'🤔', situ_fiado:'🧾', situ_regateo:'💸', situ_venta:'💰', situ_album:'📕', situ_chiste:'😈'
+  situ_mascaras:'🎭', situ_indeciso:'🤔', situ_fiado:'🧾', situ_regateo:'💸', situ_venta:'💰', situ_album:'📕', situ_chiste:'😈', situ_venta_cierre:'🙏'
 };
 const BUILTIN_POOL_KEYS = new Set(Object.keys(AUDIO_POOLS_CONFIG));
 function isDynamicSituKey(k){ return /^situ_[a-z0-9_]{1,48}$/.test(String(k||'')); }
@@ -646,7 +647,7 @@ function safeMode(v){ return v==='familiar'||v==='troll'?v:''; }
 
 const DEFAULT_RUNTIME_CONFIG = {
   kind: CONFIG_KIND,
-  version: 6,
+  version: 7,
   mode: {
     forced: safeMode(localStorage.getItem('troll_mode_force') || ''),
     trollStart: '21:00',
@@ -667,6 +668,7 @@ const DEFAULT_RUNTIME_CONFIG = {
     contextBoost: 5
   },
   audio: { masterVolume: S.volume },
+  salesClosing: { mode:'auto', delaySec:6, pool:'situ_venta_cierre' },
   browserSpeech: {
     enabled: false,
     familiar: [...DEFAULT_BROWSER_SPEECH_PHRASES.familiar],
@@ -686,9 +688,10 @@ const DEFAULT_RUNTIME_CONFIG = {
     folder: v.folder,
     label: POOL_LABELS[k]||k,
     icon: POOL_ICONS[k]||'',
-    showInSales: ['situ_album','situ_mascaras','situ_indeciso','situ_chiste'].includes(k),
+    showInSales: ['situ_album','situ_mascaras','situ_indeciso','situ_chiste','situ_venta_cierre'].includes(k),
     salesAction: 'now',
-    salesOrder: ({situ_album:1,situ_mascaras:2,situ_indeciso:3,situ_chiste:4}[k] ?? (50+idx))
+    salesOrder: ({situ_album:1,situ_mascaras:2,situ_indeciso:3,situ_chiste:4,situ_venta_cierre:5}[k] ?? (50+idx)),
+    silentIfMissing: !!v.silentIfMissing
   }])),
   jackEffects: {
     N1:{enabled:true,pool:'jack',emotions:['happy','curioso'],priority:60},
@@ -708,18 +711,19 @@ function mergeRuntimeConfig(base, incoming){
   if(src.mode) Object.assign(out.mode,src.mode);
   if(src.options) Object.assign(out.options,src.options);
   if(src.audio) Object.assign(out.audio,src.audio);
+  if(src.salesClosing) Object.assign(out.salesClosing,src.salesClosing);
   if(src.browserSpeech) Object.assign(out.browserSpeech,src.browserSpeech);
   if(src.pools) for(const [k,v] of Object.entries(src.pools)){
     if(!v||typeof v!=='object') continue;
     if(out.pools[k]) Object.assign(out.pools[k],v);
     else if(isDynamicSituKey(k)) out.pools[k]={
       enabled:true,tope:0,emotions:['curioso','happy'],numberEmotions:{},volume:1,priority:30,weight:1,recentAvoid:2,autoVisit:false,
-      folder:`audio/${k}`,label:k.replace(/^situ_/,'').replace(/_/g,' '),icon:'🎭',showInSales:false,salesAction:'now',salesOrder:99,...cloneJson(v)
+      folder:`audio/${k}`,label:k.replace(/^situ_/,'').replace(/_/g,' '),icon:'🎭',showInSales:false,salesAction:'now',salesOrder:99,silentIfMissing:true,...cloneJson(v)
     };
   }
   if(src.jackEffects) for(const [k,v] of Object.entries(src.jackEffects)) if(out.jackEffects[k]&&v&&typeof v==='object') Object.assign(out.jackEffects[k],v);
   if(src.jackRouting) Object.assign(out.jackRouting,src.jackRouting);
-  out.kind=CONFIG_KIND; out.version=6;
+  out.kind=CONFIG_KIND; out.version=7;
   return out;
 }
 
@@ -740,6 +744,10 @@ function normalizeRuntimeConfig(cfg){
   out.options.contextDurationSec=clampNum(out.options.contextDurationSec,5,600,45);
   out.options.contextBoost=clampNum(out.options.contextBoost,1,50,5);
   out.audio.masterVolume=clampNum(out.audio.masterVolume,0,1,0.7);
+  out.salesClosing=(out.salesClosing&&typeof out.salesClosing==='object')?out.salesClosing:cloneJson(DEFAULT_RUNTIME_CONFIG.salesClosing);
+  out.salesClosing.mode=out.salesClosing.mode==='manual'?'manual':'auto';
+  out.salesClosing.delaySec=clampNum(out.salesClosing.delaySec,0,60,6);
+  out.salesClosing.pool=isDynamicSituKey(out.salesClosing.pool)?out.salesClosing.pool:'situ_venta_cierre';
   out.browserSpeech = (out.browserSpeech && typeof out.browserSpeech==='object') ? out.browserSpeech : cloneJson(DEFAULT_RUNTIME_CONFIG.browserSpeech);
   out.browserSpeech.enabled=!!out.browserSpeech.enabled;
   for(const mode of ['familiar','troll']){
@@ -762,6 +770,7 @@ function normalizeRuntimeConfig(cfg){
     p.showInSales=!!p.showInSales;
     p.salesAction=['now','context','next'].includes(p.salesAction)?p.salesAction:'now';
     p.salesOrder=Math.max(0,Math.min(999,Math.floor(Number(p.salesOrder)||99)));
+    p.silentIfMissing=!!p.silentIfMissing;
   }
   for(const [k,j] of Object.entries(out.jackEffects)){
     j.enabled=j.enabled!==false;
@@ -803,10 +812,10 @@ function applyRuntimeConfig(persist=true){
   S.promosEnabled=RUNTIME_CONFIG.options.promosEnabled;
   S.volume=RUNTIME_CONFIG.audio.masterVolume;
   // Las situaciones creadas desde el control remoto son configuración, no lectura de carpetas.
-  // Al aplicar config reconstruimos sólo las dinámicas; las carpetas físicas nunca se borran.
+  // Al aplicar config reconstruimos sólo las dinámicas; las carpetas/rutas en GitHub nunca se borran.
   for(const k of Object.keys(AUDIO_POOLS_CONFIG)) if(!BUILTIN_POOL_KEYS.has(k)) delete AUDIO_POOLS_CONFIG[k];
   for(const [k,cfg] of Object.entries(RUNTIME_CONFIG.pools)){
-    if(!AUDIO_POOLS_CONFIG[k] && isDynamicSituKey(k)) AUDIO_POOLS_CONFIG[k]={folder:safePoolFolder(cfg.folder,k),tope:0,emotions:['curioso','happy']};
+    if(!AUDIO_POOLS_CONFIG[k] && isDynamicSituKey(k)) AUDIO_POOLS_CONFIG[k]={folder:safePoolFolder(cfg.folder,k),tope:0,emotions:['curioso','happy'],silentIfMissing:true};
     if(!AUDIO_POOLS_CONFIG[k]) continue;
     AUDIO_POOLS_CONFIG[k].folder=safePoolFolder(cfg.folder||AUDIO_POOLS_CONFIG[k].folder,k);
     AUDIO_POOLS_CONFIG[k].enabled=cfg.enabled;
@@ -818,6 +827,7 @@ function applyRuntimeConfig(persist=true){
     AUDIO_POOLS_CONFIG[k].weight=cfg.weight;
     AUDIO_POOLS_CONFIG[k].recentAvoid=cfg.recentAvoid;
     AUDIO_POOLS_CONFIG[k].autoVisit=cfg.autoVisit;
+    AUDIO_POOLS_CONFIG[k].silentIfMissing=!!cfg.silentIfMissing;
   }
   if(persist) saveRuntimeConfig();
   const vol=document.querySelector('.vol-slider'); if(vol)vol.value=String(S.volume);
@@ -1158,7 +1168,7 @@ window.AnimatronicAPI = {
     name=String(name||'').trim();
     if(!RUNTIME_CONFIG.pools[name]){
       if(!isDynamicSituKey(name)) throw new Error('Carpeta desconocida');
-      RUNTIME_CONFIG.pools[name]={enabled:true,tope:0,emotions:['curioso','happy'],numberEmotions:{},volume:1,priority:30,weight:1,recentAvoid:2,autoVisit:false,folder:`audio/${name}`,label:name.replace(/^situ_/,'').replace(/_/g,' '),icon:'🎭',showInSales:false,salesAction:'now',salesOrder:99};
+      RUNTIME_CONFIG.pools[name]={enabled:true,tope:0,emotions:['curioso','happy'],numberEmotions:{},volume:1,priority:30,weight:1,recentAvoid:2,autoVisit:false,folder:`audio/${name}`,label:name.replace(/^situ_/,'').replace(/_/g,' '),icon:'🎭',showInSales:false,salesAction:'now',salesOrder:99,silentIfMissing:true};
     }
     RUNTIME_CONFIG.pools[name]=Object.assign({},RUNTIME_CONFIG.pools[name],patch||{}); applyRuntimeConfig(true); return cloneJson(RUNTIME_CONFIG.pools[name]);
   },
@@ -2320,6 +2330,7 @@ async function speakFromCategory(categoria, emocionSiFalla) {
   const poolWeight = cfg.enabled === false ? 0 : (cfg.tope || 0);
   const total = promoWeight + poolWeight;
   if (total === 0) {
+    if (cfg.silentIfMissing) return false;
     if (tryBrowserSpeechRandom()) return true;
     return await tryPlayFromPool('fx_terror');
   }
@@ -2332,6 +2343,7 @@ async function speakFromCategory(categoria, emocionSiFalla) {
   }
   const ok = await tryPlayFromPool(categoria);
   if (!ok) {
+    if (cfg.silentIfMissing) return false;
     if (emocionSiFalla) setEmotion(emocionSiFalla);
     if (tryBrowserSpeechRandom()) return true;
     return await tryPlayFromPool('fx_terror');
