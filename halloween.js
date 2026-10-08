@@ -8,11 +8,11 @@
 (function(root){
   'use strict';
 
-  const APP_VERSION = '0.4.7';
+  const APP_VERSION = '0.4.8';
   const DB_NAME = 'halloween_2026';
-  const DB_VERSION = 1;
+  const DB_VERSION = 2;
   const STORES = Object.freeze({
-    META:'meta', PROFILES:'profiles', SALES:'sales', EVENTS:'events', INVENTORY:'inventory', OPS:'ops'
+    META:'meta', PROFILES:'profiles', SALES:'sales', EVENTS:'events', INVENTORY:'inventory', OPS:'ops', PENDING:'pending_no_jack'
   });
 
   const LEVELS = Object.freeze([
@@ -99,6 +99,7 @@
         }
         if(!d.objectStoreNames.contains(STORES.INVENTORY)) d.createObjectStore(STORES.INVENTORY,{keyPath:'id'});
         if(!d.objectStoreNames.contains(STORES.OPS)) d.createObjectStore(STORES.OPS,{keyPath:'id'});
+        if(!d.objectStoreNames.contains(STORES.PENDING)) d.createObjectStore(STORES.PENDING,{keyPath:'id'});
       };
       r.onsuccess=()=>resolve(r.result);
       r.onerror=()=>reject(r.error||new Error('No se pudo abrir Halloween DB'));
@@ -275,6 +276,65 @@
     const profile=await getProfile(code,true);
     const cardsOwed=Math.max(0,Math.floor(Number(result.acumulado||0)/config.cartaCada)-Number(profile.freeDelivered||0));
     return {ok:true,result,profile,nuevo,nivelAntes,nivelDespues:result.nivel||null,cardsOwed,partId};
+  }
+
+  async function listPendingNoJack({includeClosed=true}={}){
+    const tx=db.transaction([STORES.PENDING],'readonly');
+    const rows=await reqPromise(tx.objectStore(STORES.PENDING).getAll()); await txPromise(tx);
+    return rows.filter(x=>includeClosed||x.estado==='pendiente').map(clone).sort((a,b)=>String(b.actualizadoEn||b.creadoEn||'').localeCompare(String(a.actualizadoEn||a.creadoEn||'')));
+  }
+
+  async function getPendingNoJack(id){
+    const tx=db.transaction([STORES.PENDING],'readonly'); const row=await reqPromise(tx.objectStore(STORES.PENDING).get(String(id))); await txPromise(tx);
+    return row?clone(row):null;
+  }
+
+  async function savePendingNoJack({id=null,alias='',acumulado=0,cartasEntregadas=0,nota=''}){
+    await requireWriter();
+    const amount=Math.max(0,Number(acumulado)||0), cards=Math.max(0,Math.floor(Number(cartasEntregadas)||0));
+    const earned=Math.floor(amount/config.cartaCada);
+    if(cards>earned) throw new Error(`Con ${money(amount)} sólo corresponden ${earned} carta(s) gratis. Revisa “cartas entregadas”.`);
+    const cleanAlias=String(alias||'').trim().slice(0,80); if(!cleanAlias) throw new Error('Pon un alias o recordatorio para identificar a la persona.');
+    const cleanNote=String(nota||'').trim().slice(0,500);
+    let rec=id?await getPendingNoJack(id):null;
+    if(rec && rec.estado!=='pendiente') throw new Error('Ese registro ya está cerrado o convertido a Jack.');
+    const now=nowIso();
+    if(!rec) rec={id:uuid(),alias:cleanAlias,acumulado:amount,cartasEntregadas:cards,nota:cleanNote,estado:'pendiente',creadoEn:now,actualizadoEn:now};
+    else Object.assign(rec,{alias:cleanAlias,acumulado:amount,cartasEntregadas:cards,nota:cleanNote,actualizadoEn:now});
+    const tx=db.transaction([STORES.PENDING],'readwrite'); tx.objectStore(STORES.PENDING).put(clone(rec)); await txPromise(tx);
+    await addEvent({tipo:'sin_jack_guardado',pendingId:rec.id,monto:amount,cantidad:cards,nota:`${cleanAlias}${cleanNote?' · '+cleanNote:''}`});
+    return clone(rec);
+  }
+
+  async function closePendingNoJack(id){
+    await requireWriter(); const rec=await getPendingNoJack(id); if(!rec) throw new Error('Acumulación sin Jack no encontrada.');
+    if(rec.estado!=='pendiente') return rec;
+    rec.estado='cerrado';rec.cerradoEn=nowIso();rec.actualizadoEn=rec.cerradoEn;
+    const tx=db.transaction([STORES.PENDING],'readwrite');tx.objectStore(STORES.PENDING).put(clone(rec));await txPromise(tx);
+    await addEvent({tipo:'sin_jack_cerrado',pendingId:rec.id,monto:rec.acumulado,cantidad:rec.cartasEntregadas,nota:rec.alias});
+    return clone(rec);
+  }
+
+  async function convertPendingNoJack(id,codigo){
+    await requireWriter(); const rec=await getPendingNoJack(id); if(!rec) throw new Error('Acumulación sin Jack no encontrada.');
+    if(rec.estado!=='pendiente') throw new Error('Ese registro ya no está pendiente.');
+    if(Number(rec.acumulado||0)<config.compraMinJack) throw new Error(`Todavía no llega a ${money(config.compraMinJack)} para activar un Jack.`);
+    const code=normalizeCode(codigo); if(!code) throw new Error('Escribe el código Jack.');
+    const val=await Folios.validar(code); if(!val.existe) throw new Error('Ese Jack no existe en el lote impreso.');
+    if(val.estado!=='impresa') throw new Error(`Ese Jack no está disponible para activar (${val.estado}).`);
+    const partId=`PEND-${String(rec.id).slice(0,18)}-${Date.now().toString(36).toUpperCase()}`;
+    const result=await Folios.entregar(code,Number(rec.acumulado||0),partId);
+    if(result.usadaEnOtroFolio) throw new Error('Ese movimiento ya fue aplicado a otro Jack.');
+    const profile=await getProfile(code,true), already=Number(profile.freeDelivered||0), delivered=Math.max(0,Math.floor(Number(rec.cartasEntregadas)||0));
+    for(let i=already;i<delivered;i++) profile.cardHistory.push({id:null,fecha:nowIso(),ventaId:partId,source:'sin_jack_previo'});
+    profile.freeDelivered=Math.max(already,delivered);
+    if(!String(profile.nota||'').trim()) profile.nota=[rec.alias,rec.nota].filter(Boolean).join(' · ').slice(0,500);
+    await saveProfile(profile);
+    rec.estado='convertido';rec.codigo=code;rec.convertidoEn=nowIso();rec.actualizadoEn=rec.convertidoEn;
+    {const tx=db.transaction([STORES.PENDING],'readwrite');tx.objectStore(STORES.PENDING).put(clone(rec));await txPromise(tx);}
+    await addEvent({tipo:'sin_jack_convertido',pendingId:rec.id,partId,codigo:code,monto:rec.acumulado,acumulado:result.acumulado,nivel:result.nivel,cantidad:delivered,nota:rec.alias});
+    const snap=await jackSnapshot(code);
+    return {ok:true,record:clone(rec),result,snapshot:snap,cardsOwed:snap.freePending};
   }
 
   async function addEvent(evt){
@@ -466,9 +526,10 @@
     const levels={N1:0,N2:0,N3:0,N4:0,sin_nivel:0};
     for(const x of active){ const v=LEVELS.filter(l=>Number(x.acumulado)>=l.min).pop(); levels[v?v.id:'sin_nivel']++; }
     const counts={}; for(const e of events.filter(x=>x.tipo==='cartas_entregadas')) for(const id of e.cardIds||[]) counts[id]=(counts[id]||0)+1;
+    const pendingNoJack=await listPendingNoJack({includeClosed:false});
     return {
       jacksActivos:active.length, acumuladoTotal:vals.reduce((a,b)=>a+b,0), acumuladoPromedio:vals.length?vals.reduce((a,b)=>a+b,0)/vals.length:0,
-      niveles:levels, perfiles:profiles.length, ventasHalloween:sales.length, pendientesOps:ops.filter(x=>x.estado!=='completada').length,
+      niveles:levels, perfiles:profiles.length, ventasHalloween:sales.length, pendientesOps:ops.filter(x=>x.estado!=='completada').length,pendingNoJack:pendingNoJack.length,
       inventario:inv, cartasRegistradas:counts, eventos:events.length
     };
   }
@@ -529,7 +590,7 @@
     const data=parseFullBackup(input);
     const foliosAnalysis=await Folios.analizarImportacion(data.folios);
     const incoming=data.halloween||{};
-    const counts={}; for(const k of ['profiles','sales','events','inventory','ops']) counts[k]=Array.isArray(incoming[k])?incoming[k].length:0;
+    const counts={}; for(const k of ['profiles','sales','events','inventory','ops','pending']) counts[k]=Array.isArray(incoming[k])?incoming[k].length:0;
     return {folios:foliosAnalysis,counts,exportedAt:data.exportedAt||null,version:data.version||null};
   }
 
@@ -540,13 +601,13 @@
     const current={};
     for(const [k,name] of Object.entries(STORES)) current[k.toLowerCase()]=await getStoreRows(name);
     const foliosBefore=await Folios.exportar();
-    const substantiveLocal=((current.profiles?.length||0)+(current.sales?.length||0)+(current.events?.length||0)+(current.ops?.length||0)>0) || ((foliosBefore.folios||[]).length>0);
+    const substantiveLocal=((current.profiles?.length||0)+(current.sales?.length||0)+(current.events?.length||0)+(current.ops?.length||0)+(current.pending?.length||0)>0) || ((foliosBefore.folios||[]).length>0);
     const folioAnalysis=await Folios.analizarImportacion(data.folios);
     const folioResult=await Folios.aplicarImportacion(data.folios,{confirmado:true,resolverConflictos:'mantener_local'});
-    const stats={profilesAdded:0,profilesMerged:0,salesAdded:0,salesMerged:0,eventsAdded:0,opsAdded:0,inventoryRestored:0,conflicts:0};
+    const stats={profilesAdded:0,profilesMerged:0,salesAdded:0,salesMerged:0,eventsAdded:0,opsAdded:0,pendingAdded:0,pendingMerged:0,inventoryRestored:0,conflicts:0};
 
-    const tx=db.transaction([STORES.PROFILES,STORES.SALES,STORES.EVENTS,STORES.INVENTORY,STORES.OPS],'readwrite');
-    const pSt=tx.objectStore(STORES.PROFILES), sSt=tx.objectStore(STORES.SALES), eSt=tx.objectStore(STORES.EVENTS), iSt=tx.objectStore(STORES.INVENTORY), oSt=tx.objectStore(STORES.OPS);
+    const tx=db.transaction([STORES.PROFILES,STORES.SALES,STORES.EVENTS,STORES.INVENTORY,STORES.OPS,STORES.PENDING],'readwrite');
+    const pSt=tx.objectStore(STORES.PROFILES), sSt=tx.objectStore(STORES.SALES), eSt=tx.objectStore(STORES.EVENTS), iSt=tx.objectStore(STORES.INVENTORY), oSt=tx.objectStore(STORES.OPS), nSt=tx.objectStore(STORES.PENDING);
     try{
       const pMap=new Map((current.profiles||[]).map(x=>[normalizeCode(x.codigo),x]));
       for(const raw of incoming.profiles||[]){ const inc=clone(raw); inc.codigo=normalizeCode(inc.codigo); const cur=pMap.get(inc.codigo); if(!cur){pSt.put(inc);stats.profilesAdded++;}else{pSt.put(mergeProfile(cur,inc));stats.profilesMerged++;} }
@@ -559,6 +620,9 @@
 
       const oMap=new Map((current.ops||[]).map(x=>[String(x.id),x]));
       for(const inc0 of incoming.ops||[]){ const inc=clone(inc0), key=String(inc.id), cur=oMap.get(key); if(!cur){oSt.put(inc);stats.opsAdded++;}else if(cur.estado==='pendiente'&&inc.estado!=='pendiente'){oSt.put(inc);} }
+
+      const nMap=new Map((current.pending||[]).map(x=>[String(x.id),x]));
+      for(const inc0 of incoming.pending||[]){ const inc=clone(inc0),key=String(inc.id),cur=nMap.get(key);if(!cur){nSt.put(inc);stats.pendingAdded++;}else{const use=isoMs(inc.actualizadoEn)>isoMs(cur.actualizadoEn)?inc:cur;nSt.put(clone(use));stats.pendingMerged++;} }
 
       const iMap=new Map((current.inventory||[]).map(x=>[String(x.id),x]));
       for(const inc0 of incoming.inventory||[]){ const inc=clone(inc0), cur=iMap.get(String(inc.id));
@@ -665,13 +729,13 @@
   const Core=Object.freeze({
     init:initCore,configure,get config(){return clone(config);},levels:LEVELS,cards:DEFAULT_CARDS,
     captureSale,getSale,getJackSales,getJackEvents,applyAllocation,closeSaleWithoutJack,getProfile,jackSnapshot,listInventory,setInventory,registerDraw,registerQuickCards,
-    markCatrina,saveReportedOwned,saveJackNote,registerPastJack,redeem,summary,exportAll,auditTSV,auditPendingTSV,setAuditPendingConfirm,markAuditExported,backupStatus,markBackupNow,
+    markCatrina,saveReportedOwned,saveJackNote,registerPastJack,listPendingNoJack,getPendingNoJack,savePendingNoJack,closePendingNoJack,convertPendingNoJack,redeem,summary,exportAll,auditTSV,auditPendingTSV,setAuditPendingConfirm,markAuditExported,backupStatus,markBackupNow,
     analyzeImportAll,importAllMerge,reconcileOps,acquireWriterLock,folioHasSale,resetSeasonForTests,getOperationalMode,setOperationalMode
   });
   root.Halloween2026=Core;
 
   /* =========================== UI =========================== */
-  const UI={ currentSale:null, currentJack:null, selectedCards:[], drawContext:null, albumContext:null, initialized:false, noJackConfirmUntil:0, noJackTimer:null, scanner:null };
+  const UI={ currentSale:null, currentJack:null, selectedCards:[], drawContext:null, albumContext:null, pendingEditingId:null, finalizedSales:new Set(), initialized:false, noJackConfirmUntil:0, noJackTimer:null, scanner:null };
 
   function injectStyles(){
     const s=document.createElement('style'); s.textContent=`
@@ -722,6 +786,20 @@
     document.getElementById('hwPastJackSave').onclick=savePastJack;
     document.getElementById('hwPastJackScan').onclick=()=>openQrScanner(code=>{ const el=document.getElementById('hwPastJackCode'); if(el)el.value=code; });
 
+    const pending=document.createElement('div'); pending.id='hwPendingNoJackOverlay'; pending.className='overlay hw-overlay'; pending.style.display='none'; pending.innerHTML=`
+      <div class="overlay-card hw-wide"><div class="overlay-header"><strong>🧾 Acumulación sin Jack</strong><button class="close-x" id="hwPendingNoJackClose">✕</button></div>
+      <div class="hw-muted">Sólo para excepciones que tú reconoces. No crea una venta ni activa un Jack hasta que lo conviertas.</div>
+      <div class="field" style="margin-top:10px;"><label>Alias / recordatorio</label><input id="hwPendingAlias" type="text" maxlength="80" placeholder="Ej. Niño de las cartas"></div>
+      <div class="field" style="margin-top:8px;"><label>Acumulado reconocido</label><input id="hwPendingAmount" type="number" min="0" step="0.01" value="0"></div>
+      <div class="field" style="margin-top:8px;"><label>Cartas gratis ya entregadas</label><input id="hwPendingCards" type="number" min="0" step="1" value="0"></div>
+      <div class="field" style="margin-top:8px;"><label>Nota (opcional)</label><textarea id="hwPendingNote" maxlength="500" rows="3"></textarea></div>
+      <button class="btn-primary" id="hwPendingSave" style="margin-top:10px;">Guardar</button>
+      <button class="btn-secondary btn-block" id="hwPendingCancel" style="margin-top:8px;">Cancelar</button>
+      </div>`; document.body.appendChild(pending);
+    document.getElementById('hwPendingNoJackClose').onclick=closePendingEditor;
+    document.getElementById('hwPendingCancel').onclick=closePendingEditor;
+    document.getElementById('hwPendingSave').onclick=savePendingEditor;
+
     const scanner=document.createElement('div'); scanner.id='hwQrOverlay'; scanner.className='overlay hw-overlay'; scanner.style.display='none'; scanner.innerHTML=`
       <div class="overlay-card hw-wide"><div class="overlay-header"><strong>📷 Escanear Jack</strong><button class="close-x" id="hwQrClose">✕</button></div>
       <div class="hw-scan-frame"><video id="hwQrVideo" class="hw-scan-video" playsinline muted></video></div>
@@ -762,6 +840,7 @@
       <div id="hwSystemStatus" class="hw-muted"></div>
       <div class="hw-grid" id="hwStats"></div>
       <div class="hw-section"><strong>Buscar Jack</strong><div class="hw-muted" style="margin-top:4px;">Busca un Jack para ver o editar su <b>nota / nombre / recordatorio</b>.</div><div class="hw-line" style="margin-top:8px;"><input id="hwLookupCode" type="text" placeholder="H26-XXXXXX"><button class="btn-secondary hw-scan-btn" id="hwLookupScan" title="Escanear QR">📷</button><button class="btn-secondary" id="hwLookupBtn">Buscar</button></div><button class="btn-secondary btn-block" id="hwPastJackOpen" style="margin-top:8px;">🕘 Registrar compra pasada / Jack pendiente</button><div id="hwJackPanel"></div></div>
+      <details class="hw-section" id="hwPendingDetails"><summary style="cursor:pointer;font-weight:700;">🧾 Acumulación sin Jack <span id="hwPendingCount" class="hw-muted"></span></summary><div class="hw-muted" style="margin-top:7px;">Para casos especiales que tú reconoces. Si nunca llega a $50, se puede cerrar sin crear un Jack.</div><button class="btn-secondary btn-block" id="hwPendingNew" style="margin-top:8px;">＋ Nueva acumulación</button><div id="hwPendingList" style="margin-top:8px;"></div></details>
       <div class="hw-muted" style="margin-top:14px;">Configuración, inventario, lotes y respaldos están en ⚙️ Opciones.</div>
       </div>`; document.body.appendChild(dash);
     document.getElementById('hwDashClose').onclick=()=>{ clearDashboardTransient(); dash.style.display='none'; document.getElementById('btnHalloweenMode')?.classList.remove('active');};
@@ -770,6 +849,8 @@
       const el=document.getElementById('hwLookupCode'); if(el)el.value=code; lookupJack();
     });
     document.getElementById('hwPastJackOpen').onclick=openPastJack;
+    document.getElementById('hwPendingNew').onclick=()=>openPendingEditor();
+    document.getElementById('hwPendingDetails').addEventListener('toggle',e=>{if(e.target.open)renderPendingList();});
 
     const dailyMount=document.getElementById('seasonDailyExtraMount');
     if(dailyMount){
@@ -856,6 +937,8 @@
       const s=document.getElementById('hwSaleOverlay'); if(s)s.style.display='none';
       const dr=document.getElementById('hwDrawOverlay'); if(dr)dr.style.display='none';
       const al=document.getElementById('hwAlbumOverlay'); if(al)al.style.display='none'; UI.albumContext=null;
+      const pj=document.getElementById('hwPastJackOverlay'); if(pj)pj.style.display='none';
+      const pn=document.getElementById('hwPendingNoJackOverlay'); if(pn)pn.style.display='none'; UI.pendingEditingId=null;
     }
   }
 
@@ -942,6 +1025,10 @@
   function escapeHtml(v){ const d=document.createElement('div');d.textContent=String(v??'');return d.innerHTML; }
   function showMsg(msg){ if(typeof showToast==='function')showToast(msg); else alert(msg); }
   function emitHalloweenEvent(type,detail={}){ document.dispatchEvent(new CustomEvent('hw:event',{detail:{type,fecha:new Date().toISOString(),...detail}})); }
+  function emitSaleFinalizedOnce(ventaId,detail={}){
+    const id=String(ventaId||''); if(!id||UI.finalizedSales.has(id))return;
+    UI.finalizedSales.add(id); emitHalloweenEvent('venta_finalizada',{ventaId:id,...detail});
+  }
 
   function clearSaleTransient(){
     UI.noJackConfirmUntil=0; clearTimeout(UI.noJackTimer); UI.noJackTimer=null;
@@ -1068,8 +1155,10 @@
       const out=await Core.applyAllocation({ventaId:UI.currentSale.ventaId,codigo:code,monto:amount}); UI.currentSale=out.sale;
       if(note) await Core.saveJackNote(code,note);
       emitHalloweenEvent(out.nuevo?'jack_nuevo':'compra_jack',{codigo:normalizeCode(code),monto:amount,acumulado:out.result.acumulado,nivel:out.result.nivel,ventaId:UI.currentSale.ventaId});
-      if(out.nivelAntes!==out.nivelDespues && out.nivelDespues) emitHalloweenEvent('subio_nivel',{codigo:normalizeCode(code),antes:out.nivelAntes,despues:out.nivelDespues,acumulado:out.result.acumulado});
-      if(out.cardsOwed>0) await openDraw({codigo:normalizeCode(code),ventaId:UI.currentSale.ventaId,count:out.cardsOwed,anonymous:false});
+      if(out.nivelAntes!==out.nivelDespues && out.nivelDespues) emitHalloweenEvent('subio_nivel',{codigo:normalizeCode(code),antes:out.nivelAntes,despues:out.nivelDespues,acumulado:out.result.acumulado,ventaId:UI.currentSale.ventaId});
+      const saleComplete=Number(out.sale?.unallocated||0)<=0.0001;
+      if(out.cardsOwed>0) await openDraw({codigo:normalizeCode(code),ventaId:UI.currentSale.ventaId,count:out.cardsOwed,anonymous:false,finalizeSale:saleComplete});
+      else if(saleComplete) emitSaleFinalizedOnce(UI.currentSale.ventaId,{codigo:normalizeCode(code),conJack:true});
       await renderSaleBody();
       showMsg(out.nuevo?'Jack activado':'Compra sumada a Jack');
     }catch(e){ alert(e.message); }
@@ -1088,7 +1177,7 @@
     UI.noJackConfirmUntil=0; clearTimeout(UI.noJackTimer);
     try{
       const out=await Core.closeSaleWithoutJack(UI.currentSale.ventaId); UI.currentSale=out.sale;
-      document.getElementById('hwSaleOverlay').style.display='none'; showMsg('Venta normal · sin Jack');
+      document.getElementById('hwSaleOverlay').style.display='none'; emitSaleFinalizedOnce(UI.currentSale.ventaId,{conJack:false}); showMsg('Venta normal · sin Jack');
     }catch(e){alert(e.message);}
   }
 
@@ -1134,19 +1223,19 @@
 
   async function confirmDraw(){
     const ctx=UI.drawContext; if(!ctx)return; if(UI.selectedCards.length!==ctx.count){showMsg(`Faltan ${ctx.count-UI.selectedCards.length} por registrar`);return;}
-    try{ await Core.registerDraw({...ctx,cardIds:UI.selectedCards,source:'gratis'}); emitHalloweenEvent('cartas_entregadas',{codigo:ctx.codigo||null,ventaId:ctx.ventaId||null,cantidad:UI.selectedCards.length,cardIds:[...UI.selectedCards]}); document.getElementById('hwDrawOverlay').style.display='none'; UI.drawContext=null; UI.selectedCards=[]; showMsg('Cartas registradas'); }
+    try{ await Core.registerDraw({...ctx,cardIds:UI.selectedCards,source:'gratis'}); emitHalloweenEvent('cartas_entregadas',{codigo:ctx.codigo||null,ventaId:ctx.ventaId||null,cantidad:UI.selectedCards.length,cardIds:[...UI.selectedCards]}); document.getElementById('hwDrawOverlay').style.display='none'; UI.drawContext=null; UI.selectedCards=[]; if(ctx.finalizeSale&&ctx.ventaId)emitSaleFinalizedOnce(ctx.ventaId,{codigo:ctx.codigo||null,conJack:!!ctx.codigo}); showMsg('Cartas registradas'); }
     catch(e){alert(e.message);}
   }
 
   async function confirmQuickDraw(){
     const ctx=UI.drawContext; if(!ctx)return;
     if(!confirm(`¿Confirmar que entregaste ${ctx.count} carta(s) sin registrar cuáles? Se contará la entrega, pero no actualizará inventario por diseño.`))return;
-    try{ await Core.registerQuickCards({...ctx,count:ctx.count,source:'gratis'}); emitHalloweenEvent('cartas_entregadas_rapido',{codigo:ctx.codigo||null,ventaId:ctx.ventaId||null,cantidad:ctx.count}); document.getElementById('hwDrawOverlay').style.display='none'; UI.drawContext=null; UI.selectedCards=[]; showMsg('Entrega rápida registrada'); }
+    try{ await Core.registerQuickCards({...ctx,count:ctx.count,source:'gratis'}); emitHalloweenEvent('cartas_entregadas_rapido',{codigo:ctx.codigo||null,ventaId:ctx.ventaId||null,cantidad:ctx.count}); document.getElementById('hwDrawOverlay').style.display='none'; UI.drawContext=null; UI.selectedCards=[]; if(ctx.finalizeSale&&ctx.ventaId)emitSaleFinalizedOnce(ctx.ventaId,{codigo:ctx.codigo||null,conJack:!!ctx.codigo}); showMsg('Entrega rápida registrada'); }
     catch(e){alert(e.message);}
   }
 
   async function openDashboard(){
-    if(!isHalloweenChannel())return; document.getElementById('btnHalloweenMode')?.classList.add('active'); document.getElementById('hwDashboardOverlay').style.display='flex'; await refreshStats();
+    if(!isHalloweenChannel())return; document.getElementById('btnHalloweenMode')?.classList.add('active'); document.getElementById('hwDashboardOverlay').style.display='flex'; await Promise.all([refreshStats(),renderPendingList()]);
   }
 
   async function refreshStats(){
@@ -1216,6 +1305,58 @@
       alert(`Jack actualizado.\n\nAcumulado: ${money(out.result.acumulado)}\nNivel: ${out.result.nivel||'sin nivel'}\nCartas pendientes: ${out.cardsOwed}\n\nCuando vuelva el cliente, búscalo y usa “Entregar sobres pendientes”.`);
     }catch(e){alert(e.message);}
     finally{btn.disabled=false;btn.textContent=prev;}
+  }
+
+  async function openPendingEditor(id=null){
+    UI.pendingEditingId=id?String(id):null;
+    const rec=id?await Core.getPendingNoJack(id):null;
+    document.getElementById('hwPendingAlias').value=rec?.alias||'';
+    document.getElementById('hwPendingAmount').value=Number(rec?.acumulado||0).toFixed(2);
+    document.getElementById('hwPendingCards').value=String(Number(rec?.cartasEntregadas||0));
+    document.getElementById('hwPendingNote').value=rec?.nota||'';
+    document.getElementById('hwPendingNoJackOverlay').style.display='flex';
+  }
+  function closePendingEditor(){UI.pendingEditingId=null;const ov=document.getElementById('hwPendingNoJackOverlay');if(ov)ov.style.display='none';}
+  async function savePendingEditor(){
+    const btn=document.getElementById('hwPendingSave');if(!btn||btn.disabled)return;
+    const alias=document.getElementById('hwPendingAlias')?.value||'',acumulado=Number(document.getElementById('hwPendingAmount')?.value),cartasEntregadas=Number(document.getElementById('hwPendingCards')?.value),nota=document.getElementById('hwPendingNote')?.value||'';
+    btn.disabled=true;const prev=btn.textContent;btn.textContent='Guardando…';
+    try{await Core.savePendingNoJack({id:UI.pendingEditingId,alias,acumulado,cartasEntregadas,nota});closePendingEditor();await renderPendingList();await refreshStats();await refreshBackupStatus();showMsg('Acumulación sin Jack guardada');}
+    catch(e){alert(e.message);}
+    finally{btn.disabled=false;btn.textContent=prev;}
+  }
+  async function convertPendingUI(id){
+    const rec=await Core.getPendingNoJack(id);if(!rec)return;
+    if(Number(rec.acumulado||0)<Number(config.compraMinJack||50)){alert(`Todavía lleva ${money(rec.acumulado)}. El Jack se activa al llegar a ${money(config.compraMinJack)}.`);return;}
+    const codigo=prompt(`CONVERTIR A JACK\n\n${rec.alias}\nAcumulado: ${money(rec.acumulado)}\nCartas ya entregadas: ${rec.cartasEntregadas}\n\nEscribe el código del Jack impreso:`,'');
+    if(codigo===null)return;
+    if(!confirm(`¿Convertir "${rec.alias}" a ${normalizeCode(codigo)}?\n\nSe transferirá ${money(rec.acumulado)} y se respetarán ${rec.cartasEntregadas} carta(s) ya entregadas.`))return;
+    try{
+      const out=await Core.convertPendingNoJack(id,codigo);
+      await renderPendingList();await refreshStats();await refreshBackupStatus();
+      const lookup=document.getElementById('hwLookupCode');if(lookup)lookup.value=out.snapshot.codigo;await lookupJack();
+      alert(`Jack activado.\n\nAcumulado: ${money(out.snapshot.acumulado)}\nNivel: ${out.snapshot.nivel||'sin nivel'}\nCartas pendientes: ${out.cardsOwed}`);
+    }catch(e){alert(e.message);}
+  }
+  async function closePendingUI(id){
+    const rec=await Core.getPendingNoJack(id);if(!rec)return;
+    if(!confirm(`Cerrar la acumulación de "${rec.alias}"?\n\nNo crea Jack. El registro queda en historial y en el respaldo JSON.`))return;
+    try{await Core.closePendingNoJack(id);await renderPendingList();await refreshStats();await refreshBackupStatus();showMsg('Acumulación cerrada');}catch(e){alert(e.message);}
+  }
+  async function renderPendingList(){
+    const host=document.getElementById('hwPendingList');if(!host)return;
+    const rows=await Core.listPendingNoJack({includeClosed:true}),pending=rows.filter(x=>x.estado==='pendiente'),history=rows.filter(x=>x.estado!=='pendiente');
+    const count=document.getElementById('hwPendingCount');if(count)count.textContent=pending.length?`(${pending.length})`:'';
+    const rowHtml=r=>{
+      const earned=Math.floor(Number(r.acumulado||0)/Number(config.cartaCada||25)),canConvert=r.estado==='pendiente'&&Number(r.acumulado||0)>=Number(config.compraMinJack||50);
+      const status=r.estado==='pendiente'?'Pendiente':r.estado==='convertido'?`Convertido · ${escapeHtml(r.codigo||'')}`:'Cerrado';
+      const actions=r.estado==='pendiente'?`<div class="hw-line" style="margin-top:7px;"><button class="btn-secondary" data-pending-edit="${r.id}">Editar</button><button class="btn-secondary" data-pending-convert="${r.id}" ${canConvert?'':'disabled'}>→ Jack</button><button class="btn-secondary" data-pending-close="${r.id}">Cerrar</button></div>`:'';
+      return `<div class="card hw-card" style="padding:9px;margin-top:7px;"><div style="display:flex;justify-content:space-between;gap:8px;"><b>${escapeHtml(r.alias)}</b><span class="hw-pill">${status}</span></div><div class="total-line"><span>Acumulado</span><strong>${money(r.acumulado)}</strong></div><div class="total-line"><span>Cartas entregadas / ganadas</span><strong>${Number(r.cartasEntregadas||0)}/${earned}</strong></div>${r.nota?`<div class="hw-muted">${escapeHtml(r.nota)}</div>`:''}${actions}</div>`;
+    };
+    host.innerHTML=(pending.map(rowHtml).join('')||'<div class="hw-muted">No hay acumulaciones sin Jack pendientes.</div>')+(history.length?`<details style="margin-top:8px;"><summary style="cursor:pointer;font-weight:700;">Historial (${history.length})</summary>${history.map(rowHtml).join('')}</details>`:'');
+    host.querySelectorAll('[data-pending-edit]').forEach(b=>b.onclick=()=>openPendingEditor(b.dataset.pendingEdit));
+    host.querySelectorAll('[data-pending-convert]').forEach(b=>b.onclick=()=>convertPendingUI(b.dataset.pendingConvert));
+    host.querySelectorAll('[data-pending-close]').forEach(b=>b.onclick=()=>closePendingUI(b.dataset.pendingClose));
   }
 
   async function lookupJack(){
