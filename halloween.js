@@ -3,12 +3,12 @@
  * Capa de temporada para el ERP de ventas.
  * - Folios (folios_v2.js) sigue siendo la autoridad para Jack: estado, acumulado, nivel y canje.
  * - Esta base separada guarda cartas, inventario, repartos, eventos y estadísticas.
- * - No guarda nombres, teléfonos ni datos personales.
+ * - No exige datos personales. Cada Jack puede tener una nota/nombre/recordatorio opcional.
  */
 (function(root){
   'use strict';
 
-  const APP_VERSION = '0.4.4';
+  const APP_VERSION = '0.4.7';
   const DB_NAME = 'halloween_2026';
   const DB_VERSION = 1;
   const STORES = Object.freeze({
@@ -226,7 +226,7 @@
     const tx=db.transaction([STORES.PROFILES],'readwrite'); const st=tx.objectStore(STORES.PROFILES);
     let p=await reqPromise(st.get(code));
     if(!p && create){
-      p={ codigo:code, creadoEn:nowIso(), actualizadoEn:nowIso(), freeDelivered:0, cardHistory:[], rescates:0, catrina:false, charro:false, albumComplete:false, reportedOwned:[], reportedAt:null };
+      p={ codigo:code, creadoEn:nowIso(), actualizadoEn:nowIso(), freeDelivered:0, cardHistory:[], rescates:0, catrina:false, charro:false, albumComplete:false, reportedOwned:[], reportedAt:null, nota:'' };
       st.add(p);
     }
     await txPromise(tx); return p?clone(p):null;
@@ -235,6 +235,46 @@
   async function saveProfile(p){
     p.actualizadoEn=nowIso();
     const tx=db.transaction([STORES.PROFILES],'readwrite'); tx.objectStore(STORES.PROFILES).put(clone(p)); await txPromise(tx); return clone(p);
+  }
+
+  async function saveJackNote(codigo,nota=''){
+    await requireWriter();
+    const p=await getProfile(codigo,true);
+    const clean=String(nota||'').trim().slice(0,500);
+    const prev=String(p.nota||'');
+    if(prev===clean) return p;
+    p.nota=clean;
+    const saved=await saveProfile(p);
+    await addEvent({tipo:'jack_nota',codigo:saved.codigo,nota:clean});
+    return saved;
+  }
+
+  async function registerPastJack({codigo,monto,fechaVenta,nota=''}){
+    await requireWriter();
+    const amount=Number(monto);
+    if(!Number.isFinite(amount)||amount<=0) throw new Error('Monto inválido.');
+    const code=normalizeCode(codigo); if(!code) throw new Error('Escribe el código Jack.');
+    const val=await Folios.validar(code);
+    if(!val.existe) throw new Error('Ese Jack no existe en el lote impreso.');
+    const nuevo=val.estado==='impresa';
+    if(nuevo && amount<config.compraMinJack) throw new Error(`Para activar Jack se requieren al menos ${money(config.compraMinJack)}.`);
+    if(!nuevo && val.estado!=='entregada') throw new Error(`Ese Jack no puede recibir una compra pasada en estado ${val.estado}.`);
+    const nivelAntes=val.nivel||null;
+    const partId=`RETRO-${Date.now().toString(36).toUpperCase()}-${uuid().slice(0,8).toUpperCase()}`;
+    const result=nuevo?await Folios.entregar(code,amount,partId):await Folios.acumular(code,amount,partId);
+    if(result.usadaEnOtroFolio) throw new Error('Ese movimiento ya fue aplicado a otro Jack.');
+    const p=await getProfile(code,true);
+    const clean=String(nota||'').trim().slice(0,500);
+    if(clean){ p.nota=clean; await saveProfile(p); }
+    let fecha=nowIso();
+    if(fechaVenta){
+      const d=new Date(String(fechaVenta)+'T12:00:00');
+      if(!Number.isNaN(d.getTime())) fecha=d.toISOString();
+    }
+    await addEvent({fecha,tipo:'compra_pasada_jack',partId,codigo:code,monto:amount,acumulado:result.acumulado,nivel:result.nivel,nuevo,nota:clean});
+    const profile=await getProfile(code,true);
+    const cardsOwed=Math.max(0,Math.floor(Number(result.acumulado||0)/config.cartaCada)-Number(profile.freeDelivered||0));
+    return {ok:true,result,profile,nuevo,nivelAntes,nivelDespues:result.nivel||null,cardsOwed,partId};
   }
 
   async function addEvent(evt){
@@ -268,6 +308,12 @@
       const mine=(s.allocations||[]).filter(a=>normalizeCode(a.codigo)===code);
       return {...clone(s), aplicado:mine.reduce((a,x)=>a+Number(x.monto||0),0), misPartes:clone(mine)};
     }).sort((a,b)=>String(b.fecha||b.createdAt).localeCompare(String(a.fecha||a.createdAt)));
+  }
+
+  async function getJackEvents(codigo){
+    const code=normalizeCode(codigo); if(!code)return [];
+    const tx=db.transaction([STORES.EVENTS],'readonly'); const rows=await reqPromise(tx.objectStore(STORES.EVENTS).getAll()); await txPromise(tx);
+    return rows.filter(e=>normalizeCode(e.codigo)===code).map(clone).sort((a,b)=>String(b.fecha||'').localeCompare(String(a.fecha||'')));
   }
 
   async function saveSale(s){
@@ -353,7 +399,7 @@
     let p=null;
     if(codigo){
       const code=normalizeCode(codigo); p=await reqPromise(pSt.get(code));
-      if(!p) p={ codigo:code, creadoEn:fecha, actualizadoEn:fecha, freeDelivered:0, cardHistory:[], rescates:0, catrina:false, charro:false, albumComplete:false, reportedOwned:[], reportedAt:null };
+      if(!p) p={ codigo:code, creadoEn:fecha, actualizadoEn:fecha, freeDelivered:0, cardHistory:[], rescates:0, catrina:false, charro:false, albumComplete:false, reportedOwned:[], reportedAt:null, nota:'' };
       for(const id of cardIds) p.cardHistory.push({id,fecha,ventaId:ventaId||null,source});
       if(source==='gratis') p.freeDelivered=Number(p.freeDelivered||0)+cardIds.length;
       if(source==='rescate') p.rescates=Number(p.rescates||0)+cardIds.length;
@@ -374,7 +420,7 @@
     const pSt=tx.objectStore(STORES.PROFILES), sSt=tx.objectStore(STORES.SALES), eSt=tx.objectStore(STORES.EVENTS);
     if(codigo){
       const code=normalizeCode(codigo); let p=await reqPromise(pSt.get(code));
-      if(!p)p={codigo:code,creadoEn:fecha,actualizadoEn:fecha,freeDelivered:0,cardHistory:[],rescates:0,catrina:false,charro:false,albumComplete:false,reportedOwned:[],reportedAt:null};
+      if(!p)p={codigo:code,creadoEn:fecha,actualizadoEn:fecha,freeDelivered:0,cardHistory:[],rescates:0,catrina:false,charro:false,albumComplete:false,reportedOwned:[],reportedAt:null,nota:''};
       for(let i=0;i<n;i++)p.cardHistory.push({id:null,fecha,ventaId:ventaId||null,source:'rapida'});
       if(source==='gratis')p.freeDelivered=Number(p.freeDelivered||0)+n;
       p.actualizadoEn=fecha;pSt.put(p);
@@ -541,13 +587,15 @@
     const exported=new Set(onlyPending?(await metaGet('auditExportedIds',[])).map(String):[]);
     const events=ev.filter(e=>!onlyPending||!exported.has(String(e.id))).sort((a,b)=>String(a.fecha).localeCompare(String(b.fecha)));
     const saleMap=new Map(sales.map(x=>[String(x.ventaId),x]));
-    const head=['MovimientoID','Fecha','Evento','VentaID','ParteID','Jack','Monto','Acumulado','Nivel','Cartas','Productos'];
+    const head=['MovimientoID','Fecha','Evento','VentaID','ParteID','Jack','Monto','Acumulado','Nivel','Cartas','Productos','Nota'];
     const rows=events.map(e=>{
       const sale=saleMap.get(String(e.ventaId||''));
       const productos=(sale?.items||[]).map(i=>`${i.nombre} x${i.cantidad} @${Number(i.precio||0).toFixed(2)}`).join(' | ');
-      return [e.id||'',e.fecha||'',e.tipo||'',e.ventaId||'',e.partId||'',e.codigo||'',e.monto??'',e.acumulado??'',e.nivel||'',(e.cardIds||[]).join(','),productos];
+      return [e.id||'',e.fecha||'',e.tipo||'',e.ventaId||'',e.partId||'',e.codigo||'',e.monto??'',e.acumulado??'',e.nivel||'',(e.cardIds||[]).join(','),productos,e.nota||''];
     });
-    return {text:[head,...rows].map(r=>r.join('\t')).join('\n'),ids:events.map(e=>String(e.id)),count:events.length};
+    const includeHead=!onlyPending||exported.size===0;
+    const table=includeHead?[head,...rows]:rows;
+    return {text:table.map(r=>r.join('\t')).join('\n'),ids:events.map(e=>String(e.id)),count:events.length};
   }
   async function auditTSV(){ return (await auditRows(false)).text; }
   async function auditPendingTSV(){ return auditRows(true); }
@@ -616,8 +664,8 @@
 
   const Core=Object.freeze({
     init:initCore,configure,get config(){return clone(config);},levels:LEVELS,cards:DEFAULT_CARDS,
-    captureSale,getSale,getJackSales,applyAllocation,closeSaleWithoutJack,getProfile,jackSnapshot,listInventory,setInventory,registerDraw,registerQuickCards,
-    markCatrina,saveReportedOwned,redeem,summary,exportAll,auditTSV,auditPendingTSV,setAuditPendingConfirm,markAuditExported,backupStatus,markBackupNow,
+    captureSale,getSale,getJackSales,getJackEvents,applyAllocation,closeSaleWithoutJack,getProfile,jackSnapshot,listInventory,setInventory,registerDraw,registerQuickCards,
+    markCatrina,saveReportedOwned,saveJackNote,registerPastJack,redeem,summary,exportAll,auditTSV,auditPendingTSV,setAuditPendingConfirm,markAuditExported,backupStatus,markBackupNow,
     analyzeImportAll,importAllMerge,reconcileOps,acquireWriterLock,folioHasSale,resetSeasonForTests,getOperationalMode,setOperationalMode
   });
   root.Halloween2026=Core;
@@ -659,6 +707,21 @@
       <div id="hwSaleBody"></div></div>`; document.body.appendChild(saleOverlay);
     document.getElementById('hwSaleClose').onclick=()=>{ clearSaleTransient(); saleOverlay.style.display='none'; };
 
+    const retro=document.createElement('div'); retro.id='hwPastJackOverlay'; retro.className='overlay hw-overlay'; retro.style.display='none'; retro.innerHTML=`
+      <div class="overlay-card hw-wide"><div class="overlay-header"><strong>🕘 Registrar compra pasada</strong><button class="close-x" id="hwPastJackClose">✕</button></div>
+      <div class="hw-muted">Úsalo cuando la venta ya ocurrió y sólo falta reflejarla en el Jack. No crea otra venta en el ERP.</div>
+      <div class="field" style="margin-top:10px;"><label>Código Jack</label><div class="hw-line"><input id="hwPastJackCode" type="text" placeholder="H26-XXXXXX" autocomplete="off"><button class="btn-secondary hw-scan-btn" id="hwPastJackScan" type="button" title="Escanear QR">📷</button></div></div>
+      <div class="field" style="margin-top:8px;"><label>Monto de aquella compra</label><input id="hwPastJackAmount" type="number" min="0.01" step="0.01" placeholder="0.00"></div>
+      <div class="field" style="margin-top:8px;"><label>Fecha de la compra</label><input id="hwPastJackDate" type="date"></div>
+      <div class="field" style="margin-top:8px;"><label>Nota / nombre / recordatorio (opcional)</label><textarea id="hwPastJackNote" maxlength="500" rows="3" placeholder="Ej. Cliente del domingo · faltan sus cartas"></textarea></div>
+      <button class="btn-primary" id="hwPastJackSave" style="margin-top:10px;">Registrar en Jack</button>
+      <button class="btn-secondary btn-block" id="hwPastJackCancel" style="margin-top:8px;">Cancelar</button>
+      </div>`; document.body.appendChild(retro);
+    document.getElementById('hwPastJackClose').onclick=closePastJack;
+    document.getElementById('hwPastJackCancel').onclick=closePastJack;
+    document.getElementById('hwPastJackSave').onclick=savePastJack;
+    document.getElementById('hwPastJackScan').onclick=()=>openQrScanner(code=>{ const el=document.getElementById('hwPastJackCode'); if(el)el.value=code; });
+
     const scanner=document.createElement('div'); scanner.id='hwQrOverlay'; scanner.className='overlay hw-overlay'; scanner.style.display='none'; scanner.innerHTML=`
       <div class="overlay-card hw-wide"><div class="overlay-header"><strong>📷 Escanear Jack</strong><button class="close-x" id="hwQrClose">✕</button></div>
       <div class="hw-scan-frame"><video id="hwQrVideo" class="hw-scan-video" playsinline muted></video></div>
@@ -698,7 +761,7 @@
       <div class="overlay-card hw-wide" style="max-height:90vh;overflow:auto;"><div class="overlay-header"><strong>🎃 Halloween 2026</strong><button class="close-x" id="hwDashClose">✕</button></div>
       <div id="hwSystemStatus" class="hw-muted"></div>
       <div class="hw-grid" id="hwStats"></div>
-      <div class="hw-section"><strong>Buscar Jack</strong><div class="hw-line" style="margin-top:8px;"><input id="hwLookupCode" type="text" placeholder="H26-XXXXXX"><button class="btn-secondary hw-scan-btn" id="hwLookupScan" title="Escanear QR">📷</button><button class="btn-secondary" id="hwLookupBtn">Buscar</button></div><div id="hwJackPanel"></div></div>
+      <div class="hw-section"><strong>Buscar Jack</strong><div class="hw-muted" style="margin-top:4px;">Busca un Jack para ver o editar su <b>nota / nombre / recordatorio</b>.</div><div class="hw-line" style="margin-top:8px;"><input id="hwLookupCode" type="text" placeholder="H26-XXXXXX"><button class="btn-secondary hw-scan-btn" id="hwLookupScan" title="Escanear QR">📷</button><button class="btn-secondary" id="hwLookupBtn">Buscar</button></div><button class="btn-secondary btn-block" id="hwPastJackOpen" style="margin-top:8px;">🕘 Registrar compra pasada / Jack pendiente</button><div id="hwJackPanel"></div></div>
       <div class="hw-muted" style="margin-top:14px;">Configuración, inventario, lotes y respaldos están en ⚙️ Opciones.</div>
       </div>`; document.body.appendChild(dash);
     document.getElementById('hwDashClose').onclick=()=>{ clearDashboardTransient(); dash.style.display='none'; document.getElementById('btnHalloweenMode')?.classList.remove('active');};
@@ -706,53 +769,74 @@
     document.getElementById('hwLookupScan').onclick=()=>openQrScanner(code=>{
       const el=document.getElementById('hwLookupCode'); if(el)el.value=code; lookupJack();
     });
+    document.getElementById('hwPastJackOpen').onclick=openPastJack;
+
+    const dailyMount=document.getElementById('seasonDailyExtraMount');
+    if(dailyMount){
+      dailyMount.innerHTML=`<div id="hwDailySheetsExtra" style="display:none;margin-top:10px;padding-top:10px;border-top:1px solid var(--border);">
+        <div style="font-weight:700;margin-bottom:4px;">🎃 Halloween · Jacks</div>
+        <div class="hw-muted" style="line-height:1.45;">Estos respaldos sólo aparecen en canal Halloween.</div>
+        <button class="btn-secondary btn-block" id="hwCopyJackRegistry" style="margin-top:8px;">🎃 Padrón actual → Halloween_Jacks</button>
+        <button class="btn-secondary btn-block" id="hwAuditBtn" style="margin-top:6px;">🎃 Movimientos nuevos → Halloween_Movimientos</button>
+        <button class="btn-secondary btn-block" id="hwAuditMarkBtn" style="margin-top:6px;display:none;">✓ Ya los pegué · marcar respaldados</button>
+        <div id="hwBackupStatus" class="hw-muted" style="margin-top:8px;">Calculando respaldos…</div>
+        <button class="btn-secondary btn-block" id="hwBackupBtn" style="margin-top:8px;">💾 Respaldo JSON completo Halloween</button>
+      </div>`;
+    }
 
     const mount=document.getElementById('hwOptionsMount');
     if(mount){
       mount.innerHTML=`<div id="hwOptionsSection" style="display:none;">
-        <div class="section-title">🎃 Halloween 2026</div>
-        <details id="hwInvDetails" class="card" style="padding:12px;margin-bottom:8px;">
-          <summary style="cursor:pointer;font-weight:700;">Cartas e inventario</summary>
-          <div class="hw-muted" style="margin-top:6px;">Configuración interna de las 17 cartas normales. No aparece durante una venta.</div>
-          <div id="hwInventoryPanel" style="margin-top:8px;"></div>
-        </details>
+        <div class="section-title" style="margin-top:18px;">🎃 Halloween 2026</div>
         <details class="card" style="padding:12px;margin-bottom:8px;">
-          <summary style="cursor:pointer;font-weight:700;">Jacks, respaldo y auditoría</summary>
-          <div id="hwModeStatus" class="hw-muted" style="margin-top:8px;">Modo: calculando…</div>
-          <button class="btn-secondary btn-block" id="hwModeToggle" style="margin-top:8px;">Cambiar modo</button>
-          <div class="hw-line" style="margin-top:10px;"><input id="hwBatchCount" type="number" min="1" value="50"><button class="btn-secondary" id="hwGenerateBatch">Generar lote Jack</button></div>
-          <button class="btn-secondary btn-block" id="hwRestoreBatch" style="margin-top:8px;">↩️ Restaurar lote maestro de Jacks</button>
-          <input id="hwRestoreBatchFile" type="file" accept="application/json,.json" style="display:none;">
-          <button class="btn-secondary btn-block" id="hwRecoverJacks" style="margin-top:8px;">📋 Recuperar / copiar Jacks existentes</button>
-          <button class="btn-secondary btn-block" id="hwCopyJackRegistry" style="margin-top:8px;">📋 Copiar padrón de Jacks para Sheets</button>
-          <div class="hw-muted" style="margin-top:8px;line-height:1.45;">Capas de seguridad: <b>paquete maestro del lote</b> (identidad física) · <b>JSON completo</b> (estado e historial) · <b>Sheets</b> (padrón + movimientos).</div>
-          <div id="hwBackupStatus" class="hw-muted" style="margin-top:8px;">Calculando respaldos…</div>
-          <button class="btn-secondary btn-block" id="hwBackupBtn" style="margin-top:8px;">💾 Descargar respaldo JSON completo</button>
-          <button class="btn-secondary btn-block" id="hwImportBtn" style="margin-top:8px;">↩️ Importar JSON · fusionar sin borrar</button>
-          <input id="hwImportFile" type="file" accept="application/json,.json" style="display:none;">
-          <button class="btn-secondary btn-block" id="hwAuditBtn" style="margin-top:8px;">📋 Copiar movimientos nuevos para hoja</button>
-          <button class="btn-secondary btn-block" id="hwAuditMarkBtn" style="margin-top:8px;display:none;">✓ Ya los pegué · marcar respaldados</button>
-        </details>
-        <details class="card" style="padding:12px;margin-bottom:8px;">
-          <summary style="cursor:pointer;font-weight:700;">🧪 Pruebas</summary>
-          <div class="hw-muted" style="margin:8px 0;">Borra únicamente Halloween 2026 y los Jacks de prueba. No borra las ventas normales del ERP.</div>
-          <button class="btn-secondary btn-block" id="hwResetTests" style="border-color:var(--danger);color:var(--danger);">Borrar temporada de prueba</button>
+          <summary style="cursor:pointer;font-weight:700;">⚙️ Administración avanzada</summary>
+          <div class="hw-muted" style="margin:8px 0;line-height:1.5;">Funciones poco frecuentes. Permanecen disponibles, pero cerradas para no llenar la pantalla durante la operación diaria.</div>
+
+          <details id="hwInvDetails" class="card" style="padding:10px;margin:8px 0;">
+            <summary style="cursor:pointer;font-weight:700;">🎴 Cartas e inventario</summary>
+            <div class="hw-muted" style="margin-top:6px;">Configuración interna de las 17 cartas normales.</div>
+            <div id="hwInventoryPanel" style="margin-top:8px;"></div>
+          </details>
+
+          <details class="card" style="padding:10px;margin:8px 0;">
+            <summary style="cursor:pointer;font-weight:700;">📦 Lotes e impresión</summary>
+            <div class="hw-muted" style="margin:8px 0;">El lote oficial ya existe. Genera otro únicamente si realmente necesitas una nueva tanda.</div>
+            <div class="hw-line"><input id="hwBatchCount" type="number" min="1" value="50"><button class="btn-secondary" id="hwGenerateBatch">Generar lote Jack</button></div>
+          </details>
+
+          <details class="card" style="padding:10px;margin:8px 0;">
+            <summary style="cursor:pointer;font-weight:700;">🛟 Recuperación / emergencia</summary>
+            <div class="hw-muted" style="margin:8px 0;line-height:1.5;">No forma parte del cierre diario. Úsalo para recuperar o trasladar datos.</div>
+            <button class="btn-secondary btn-block" id="hwRestoreBatch">↩️ Restaurar lote maestro de Jacks</button>
+            <input id="hwRestoreBatchFile" type="file" accept="application/json,.json" style="display:none;">
+            <button class="btn-secondary btn-block" id="hwRecoverJacks" style="margin-top:8px;">📋 Recuperar / copiar Jacks existentes</button>
+            <button class="btn-secondary btn-block" id="hwImportBtn" style="margin-top:8px;">↩️ Importar JSON · fusionar sin borrar</button>
+            <input id="hwImportFile" type="file" accept="application/json,.json" style="display:none;">
+          </details>
+
+          <details class="card" style="padding:10px;margin:8px 0;">
+            <summary style="cursor:pointer;font-weight:700;">🧪 Pruebas y modo del sistema</summary>
+            <div id="hwModeStatus" class="hw-muted" style="margin-top:8px;">Modo: calculando…</div>
+            <button class="btn-secondary btn-block" id="hwModeToggle" style="margin-top:8px;">Cambiar modo</button>
+            <div class="hw-muted" style="margin:8px 0;">Borra únicamente Halloween 2026 y los Jacks de prueba. No borra las ventas normales del ERP.</div>
+            <button class="btn-secondary btn-block" id="hwResetTests" style="border-color:var(--danger);color:var(--danger);">Borrar temporada de prueba</button>
+          </details>
         </details>
       </div>`;
       document.getElementById('hwGenerateBatch').onclick=generateBatch;
       document.getElementById('hwRestoreBatch').onclick=()=>document.getElementById('hwRestoreBatchFile').click();
       document.getElementById('hwRestoreBatchFile').onchange=restoreBatchMasterFile;
       document.getElementById('hwRecoverJacks').onclick=recoverExistingJacks;
-      document.getElementById('hwCopyJackRegistry').onclick=copyJackRegistry;
       document.getElementById('hwModeToggle').onclick=toggleOperationalMode;
-      document.getElementById('hwBackupBtn').onclick=downloadBackup;
       document.getElementById('hwImportBtn').onclick=()=>document.getElementById('hwImportFile').click();
       document.getElementById('hwImportFile').onchange=importBackupFile;
-      document.getElementById('hwAuditBtn').onclick=copyAudit;
-      document.getElementById('hwAuditMarkBtn').onclick=markAuditCopied;
       document.getElementById('hwInvDetails').addEventListener('toggle',e=>{ if(e.target.open)renderInventory(); });
       document.getElementById('hwResetTests').onclick=resetTestsUI;
     }
+    document.getElementById('hwCopyJackRegistry')?.addEventListener('click',copyJackRegistry);
+    document.getElementById('hwBackupBtn')?.addEventListener('click',downloadBackup);
+    document.getElementById('hwAuditBtn')?.addEventListener('click',copyAudit);
+    document.getElementById('hwAuditMarkBtn')?.addEventListener('click',markAuditCopied);
   }
 
   function isHalloweenChannel(){
@@ -764,6 +848,7 @@
     const on=isHalloweenChannel();
     const b=document.getElementById('btnHalloweenMode'); if(b){ b.style.display=on?'flex':'none'; if(!on)b.classList.remove('active'); }
     const opt=document.getElementById('hwOptionsSection'); if(opt)opt.style.display=on?'block':'none';
+    const daily=document.getElementById('hwDailySheetsExtra'); if(daily)daily.style.display=on?'block':'none';
     if(on){ refreshBackupStatus(); refreshOperationalMode(); }
     if(!on){
       clearDashboardTransient(); clearSaleTransient(); stopQrScanner();
@@ -949,6 +1034,7 @@
       ${s.unallocated>0?`<div class="hw-section">
         <div class="field"><label>Código Jack</label><div class="hw-line"><input id="hwSaleCode" type="text" placeholder="H26-XXXXXX" autocomplete="off"><button class="btn-secondary hw-scan-btn" id="hwSaleScan" type="button" title="Escanear QR">📷</button></div><div id="hwSaleCodeStatus" class="hw-muted" style="min-height:18px;margin-top:4px;">Escribe o escanea el código; el sistema detecta si es nuevo o activo.</div></div>
         <div class="field" style="margin-top:8px;"><label>Monto para este Jack</label><input id="hwSaleAmount" type="number" min="0.01" step="0.01" value="${Number(s.unallocated).toFixed(2)}"></div>
+        <div class="field" style="margin-top:8px;"><label>Nota del Jack / nombre / recordatorio (opcional)</label><input id="hwSaleNote" type="text" maxlength="500" placeholder="Ej. vecino del 4º · recoger cartas después"></div>
         <button class="btn-primary" id="hwApplyJack">Aplicar a Jack</button>
         <button class="btn-secondary btn-block" id="hwNoJack" style="margin-top:8px;">Terminar sin aplicar a Jack</button>
         <div class="hw-muted" style="margin-top:8px;">Si una compra se reparte entre varios Jacks, aplica una parte y repite. Nunca podrá superar el total cobrado.</div>
@@ -978,7 +1064,9 @@
   async function applySaleJack(){
     try{
       const code=document.getElementById('hwSaleCode').value; const amount=Number(document.getElementById('hwSaleAmount').value);
+      const note=String(document.getElementById('hwSaleNote')?.value||'').trim();
       const out=await Core.applyAllocation({ventaId:UI.currentSale.ventaId,codigo:code,monto:amount}); UI.currentSale=out.sale;
+      if(note) await Core.saveJackNote(code,note);
       emitHalloweenEvent(out.nuevo?'jack_nuevo':'compra_jack',{codigo:normalizeCode(code),monto:amount,acumulado:out.result.acumulado,nivel:out.result.nivel,ventaId:UI.currentSale.ventaId});
       if(out.nivelAntes!==out.nivelDespues && out.nivelDespues) emitHalloweenEvent('subio_nivel',{codigo:normalizeCode(code),antes:out.nivelAntes,despues:out.nivelDespues,acumulado:out.result.acumulado});
       if(out.cardsOwed>0) await openDraw({codigo:normalizeCode(code),ventaId:UI.currentSale.ventaId,count:out.cardsOwed,anonymous:false});
@@ -1098,6 +1186,38 @@
     btn.addEventListener('pointerup',clear);btn.addEventListener('pointercancel',clear);btn.addEventListener('pointerleave',clear);btn.addEventListener('contextmenu',e=>e.preventDefault());
   }
 
+  function openPastJack(){
+    const ov=document.getElementById('hwPastJackOverlay'); if(!ov)return;
+    document.getElementById('hwPastJackCode').value='';
+    document.getElementById('hwPastJackAmount').value='';
+    document.getElementById('hwPastJackNote').value='';
+    const d=document.getElementById('hwPastJackDate'); if(d){const n=new Date(),pad=x=>String(x).padStart(2,'0');d.value=`${n.getFullYear()}-${pad(n.getMonth()+1)}-${pad(n.getDate())}`;}
+    ov.style.display='flex';
+  }
+  function closePastJack(){ const ov=document.getElementById('hwPastJackOverlay'); if(ov)ov.style.display='none'; }
+  async function savePastJack(){
+    const btn=document.getElementById('hwPastJackSave'); if(!btn||btn.disabled)return;
+    const codigo=document.getElementById('hwPastJackCode')?.value||'';
+    const monto=Number(document.getElementById('hwPastJackAmount')?.value);
+    const fechaVenta=document.getElementById('hwPastJackDate')?.value||'';
+    const nota=document.getElementById('hwPastJackNote')?.value||'';
+    if(!normalizeCode(codigo)){alert('Escribe o escanea el código Jack.');return;}
+    if(!Number.isFinite(monto)||monto<=0){alert('Escribe el monto real de aquella compra.');return;}
+    if(!fechaVenta){alert('Selecciona la fecha de aquella compra.');return;}
+    if(!confirm(`REGISTRAR COMPRA PASADA\n\nJack: ${normalizeCode(codigo)}\nMonto: ${money(monto)}\nFecha: ${fechaVenta}\n\nEsto NO crea otra venta en el ERP; sólo corrige el Jack y deja las cartas no entregadas como pendientes. ¿Continuar?`))return;
+    btn.disabled=true; const prev=btn.textContent; btn.textContent='Registrando…';
+    try{
+      const out=await Core.registerPastJack({codigo,monto,fechaVenta,nota});
+      closePastJack();
+      const lookup=document.getElementById('hwLookupCode'); if(lookup)lookup.value=normalizeCode(codigo);
+      await lookupJack(); await refreshStats(); await refreshBackupStatus();
+      emitHalloweenEvent(out.nuevo?'jack_nuevo':'compra_jack',{codigo:normalizeCode(codigo),monto,acumulado:out.result.acumulado,nivel:out.result.nivel,retroactivo:true});
+      if(out.nivelAntes!==out.nivelDespues && out.nivelDespues) emitHalloweenEvent('subio_nivel',{codigo:normalizeCode(codigo),antes:out.nivelAntes,despues:out.nivelDespues,acumulado:out.result.acumulado,retroactivo:true});
+      alert(`Jack actualizado.\n\nAcumulado: ${money(out.result.acumulado)}\nNivel: ${out.result.nivel||'sin nivel'}\nCartas pendientes: ${out.cardsOwed}\n\nCuando vuelva el cliente, búscalo y usa “Entregar sobres pendientes”.`);
+    }catch(e){alert(e.message);}
+    finally{btn.disabled=false;btn.textContent=prev;}
+  }
+
   async function lookupJack(){
     const code=document.getElementById('hwLookupCode').value;
     try{
@@ -1105,12 +1225,14 @@
       if(!s.existe){p.innerHTML='<div class="hw-danger" style="margin-top:8px;">Jack no encontrado.</div>';return;}
       UI.currentJack=s.codigo;
       const unique=[...new Set((s.profile.cardHistory||[]).map(x=>x.id).filter(Boolean))];
-      const sales=await Core.getJackSales(s.codigo);
+      const [sales,jackEvents]=await Promise.all([Core.getJackSales(s.codigo),Core.getJackEvents(s.codigo)]);
       const salesHtml=sales.length?`<details style="margin-top:10px;"><summary style="cursor:pointer;font-weight:700;">Compras registradas (${sales.length})</summary>
         <div style="margin-top:6px;">${sales.map(x=>{
           const items=(x.items||[]).map(i=>`<div class="sale-meta">${escapeHtml(i.nombre)} · ${i.cantidad} × ${money(i.precio)} = ${money(i.total)}</div>`).join('')||'<div class="sale-meta">Detalle de productos no disponible en esta venta antigua.</div>';
           return `<div style="padding:8px 0;border-bottom:1px solid var(--border);"><div style="display:flex;justify-content:space-between;gap:8px;"><b>${escapeHtml(x.fecha||x.createdAt||'')}</b><b>+${money(x.aplicado)}</b></div>${items}<div class="hw-muted">Cuenta completa: ${money(x.total)} · ${escapeHtml(x.ventaId)}</div></div>`;
         }).join('')}</div></details>`:'';
+      const retroEvents=jackEvents.filter(e=>e.tipo==='compra_pasada_jack');
+      const retroHtml=retroEvents.length?`<details style="margin-top:8px;"><summary style="cursor:pointer;font-weight:700;">Compras pasadas / ajustes (${retroEvents.length})</summary><div style="margin-top:6px;">${retroEvents.map(e=>`<div style="padding:7px 0;border-bottom:1px solid var(--border);"><div style="display:flex;justify-content:space-between;gap:8px;"><b>${escapeHtml(niceDate(e.fecha))}</b><b>+${money(e.monto)}</b></div>${e.nota?`<div class="hw-muted">${escapeHtml(e.nota)}</div>`:''}</div>`).join('')}</div></details>`:'';
 
       const pendingBlock=s.freePending>0
         ? `<button class="btn-secondary btn-block" id="hwDeliverPending" style="margin-top:10px;">🎴 Entregar sobres pendientes (${s.freePending})</button>`
@@ -1141,6 +1263,8 @@
         ${redeemBlock}
         <div class="hw-muted" style="margin-top:10px;">Diseños registrados por el puesto: ${unique.length}/17. El álbum físico manda después de intercambios.</div>
         ${salesHtml}
+        ${retroHtml}
+        <div class="hw-section"><div class="field"><label>Nota / nombre / recordatorio</label><textarea id="hwJackNote" maxlength="500" rows="3" placeholder="Sin nota">${escapeHtml(s.profile.nota||'')}</textarea></div><button class="btn-secondary btn-block" id="hwSaveJackNote" style="margin-top:6px;">Guardar nota</button></div>
         <button class="btn-secondary btn-block" id="hwAlbumState" style="margin-top:8px;">Actualizar cartas que dice tener ahora</button>
       </div>`;
 
@@ -1163,6 +1287,10 @@
           else {emitHalloweenEvent('canje_31',{codigo:s.codigo,acumulado:out.result.acumulado,nivel:out.result.nivel,charro:true});alert(`CANJE REGISTRADO\n\nEntregar: Bolo ${out.result.nivel||''} + Charro Negro\nAcumulado: ${money(out.result.acumulado)}`);}
           await lookupJack();await refreshStats();
         }catch(e){alert(e.message);}
+      });
+      document.getElementById('hwSaveJackNote')?.addEventListener('click',async()=>{
+        try{ const note=document.getElementById('hwJackNote')?.value||''; await Core.saveJackNote(s.codigo,note); showMsg('Nota del Jack guardada'); await lookupJack(); }
+        catch(e){alert(e.message);}
       });
       document.getElementById('hwAlbumState').onclick=()=>openAlbumState(s);
     }catch(e){alert(e.message);}
@@ -1372,9 +1500,14 @@
       const data=await Folios.exportar();
       const rows=(data.folios||[]).slice().sort((a,b)=>String(a.creadoEn||'').localeCompare(String(b.creadoEn||'')));
       if(!rows.length){showMsg('No hay Jacks para copiar');return;}
-      const text=['codigo\tlote\testado\tacumulado\tcreadoEn\tentregadoEn\tcanjeadoEn',...rows.map(f=>[f.codigo||'',f.lote||'',f.estado||'',Number(f.acumulado||0),f.creadoEn||'',f.entregadoEn||'',f.canjeadoEn||''].join('\t'))].join('\n');
+      const out=[];
+      for(const f of rows){
+        const p=await Core.getProfile(f.codigo,false);
+        out.push([f.codigo||'',f.lote||'',f.estado||'',Number(f.acumulado||0),f.nivel||'',f.creadoEn||'',f.entregadoEn||'',f.canjeadoEn||'',p?.nota||'']);
+      }
+      const text=['codigo\tlote\testado\tacumulado\tnivel\tcreadoEn\tentregadoEn\tcanjeadoEn\tnota',...out.map(r=>r.join('\t'))].join('\n');
       const ok=await safeCopy(text);
-      if(ok) alert(`${rows.length} Jacks copiados.\n\nPégalos en una pestaña del ERP/Sheets llamada, por ejemplo, Halloween_Jacks.`);
+      if(ok) alert(`${rows.length} Jacks copiados.\n\nPégalos en la pestaña Halloween_Jacks. Incluye la nota/nombre/recordatorio.`);
       else downloadPlainText(`Halloween_Jacks_${new Date().toISOString().slice(0,10)}.tsv`,text);
     }catch(e){alert('No se pudo copiar el padrón de Jacks: '+e.message);}
   }

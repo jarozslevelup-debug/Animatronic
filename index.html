@@ -173,6 +173,8 @@
       </div>
     </div>
 
+    <div id="seasonalControlsMount" style="display:none;"></div>
+
     <div id="ventaSection">
       <div class="card">
         <div class="favoritos-row" id="favoritosRow" style="display:none;"></div>
@@ -237,7 +239,7 @@
       <button class="footer-more-toggle" id="btnFooterMore" type="button" title="Acciones">⋮</button>
     </div>
     <div class="footer-more-panel" id="footerMorePanel">
-      <button class="btn-compact" id="btnCopyDatos">📋 Ventas A–F</button>
+      <button class="btn-compact" id="btnCopyDatos">📋 Ventas → Sheets</button>
       <button class="btn-compact" id="btnCopySocio" style="display:none;">📋 Socio J</button>
       <button class="btn-compact" id="btnWhatsapp">💬 WhatsApp</button>
     </div>
@@ -301,6 +303,13 @@
       <button class="btn-secondary btn-block" id="btnExportPhotoZip" type="button">📦 Exportar ZIP de pendientes</button>
       <button class="btn-secondary btn-block" id="btnClearPhotoQueue" type="button" style="margin-top:8px;">Vaciar cola de fotos</button>
       <div class="catalog-hint" style="margin-top:8px;">Las fotos individuales se siguen descargando al celular. La cola sólo conserva una copia temporal para armar el ZIP.</div>
+    </details>
+    <details class="card" id="dailySheetsDetails" open style="padding:12px;margin-top:14px;margin-bottom:8px;">
+      <summary style="cursor:pointer;font-weight:700;">📋 Cierre diario · Google Sheets</summary>
+      <div class="catalog-hint" style="text-align:left;padding:8px 0;">Las ventas del día se copian juntas; la columna <b>Canal</b> distingue Halloween, Día de Muertos, Tianguis y los demás modos.</div>
+      <button class="btn-secondary btn-block" id="optCopyDatosDaily" type="button">📋 Ventas del día → columnas A–F</button>
+      <button class="btn-secondary btn-block" id="optCopySocioDaily" type="button" style="margin-top:6px;">📋 Socio → columna J</button>
+      <div id="seasonDailyExtraMount"></div>
     </details>
     <div class="section-title" style="margin-top:18px;">Administración</div>
     <button class="btn-secondary btn-block" id="btnClearDay" type="button">🗑 Vaciar ventas de hoy</button>
@@ -1479,6 +1488,8 @@ document.getElementById("btnCopySocio").addEventListener("click", async ()=>{
   const ok = await copyText(buildSocioTSV());
   showToast(ok ? "Copiado — pega en la columna J" : "No se pudo copiar");
 });
+document.getElementById("optCopyDatosDaily")?.addEventListener("click", ()=>document.getElementById("btnCopyDatos")?.click());
+document.getElementById("optCopySocioDaily")?.addEventListener("click", ()=>document.getElementById("btnCopySocio")?.click());
 document.getElementById("btnWhatsapp").addEventListener("click", ()=>{
   if(todaySales.length === 0){ showToast("No hay ventas que enviar"); return; }
   if(!CONFIG.whatsappNumber){ showToast("Falta configurar el número de WhatsApp"); return; }
@@ -1507,6 +1518,7 @@ boot();
 </script>
 <script src="folios_v2.js?v=2"></script>
 <script src="qrcode_hw.js?v=1"></script>
-<script src="halloween.js?v=0.4.5"></script>
+<script src="halloween.js?v=0.4.7"></script>
+<script type="module" src="seasonal_controls.js?v=1"></script>
 </body>
 </html>
