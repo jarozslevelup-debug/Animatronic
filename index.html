@@ -16,6 +16,7 @@
   html,body{margin:0;padding:0;}
   body{
     background:var(--bg); color:var(--text);
+    overscroll-behavior-y:contain;
     font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
     line-height:1.45; padding-bottom:120px; transition:background .2s,color .2s;
   }
@@ -177,6 +178,14 @@
   .inventory-actions{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:9px;}
   .inventory-actions button{font-size:12px;padding:10px 8px;}
   .inventory-config-line{font-size:12px;color:var(--text-muted);margin:8px 0 0;}
+  .inventory-debt-box{margin-top:10px;padding-top:10px;border-top:1px solid var(--border);}
+  .inventory-debt-row{display:grid;grid-template-columns:1fr 92px;gap:8px;align-items:end;}
+  .inventory-debt-row input{text-align:center;font-weight:800;}
+  .debt-list-row{display:flex;justify-content:space-between;gap:10px;padding:8px 2px;border-bottom:1px solid var(--border);font-size:13px;}
+  .debt-list-row:last-child{border-bottom:none;}
+  .debt-list-row strong{white-space:nowrap;}
+  .refresh-indicator{position:fixed;top:8px;left:50%;transform:translateX(-50%);z-index:150;background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:18px;padding:6px 12px;font-size:11.5px;font-weight:700;display:none;box-shadow:0 3px 14px rgba(0,0,0,.25);}
+  .offline-badge{display:inline-block;margin-left:5px;font-size:10px;padding:2px 6px;border-radius:10px;border:1px solid #f0b54a;color:#f0b54a;vertical-align:1px;}
   @media (max-width:390px){.inventory-kpis{grid-template-columns:repeat(3,1fr);}.inventory-kpi:nth-child(4),.inventory-kpi:nth-child(5){grid-column:auto;}}
 
 </style>
@@ -270,7 +279,7 @@
     <div id="inventorySection" style="display:none;">
       <div class="card">
         <div class="inventory-top">
-          <div><div class="inventory-title">Inventario físico</div><div class="inventory-sub" id="inventoryAuditorLabel">Auditor · —</div></div>
+          <div><div class="inventory-title">Inventario físico</div><div class="inventory-sub" id="inventoryAuditorLabel">Auditor · —</div><div class="inventory-sub" id="inventorySessionLabel">Sesión · —</div></div>
           <button class="btn-secondary" id="btnExitInventory" type="button" style="padding:8px 11px;font-size:12px;">Salir</button>
         </div>
         <div class="inventory-progress"><div class="inventory-progress-fill" id="inventoryProgressFill"></div></div>
@@ -310,6 +319,7 @@
         <div class="inventory-actions">
           <button class="btn-secondary" id="btnInventoryCsv" type="button">CSV para Auditoría</button>
           <button class="btn-secondary" id="btnInventoryCopy" type="button">Copiar para Sheets</button>
+          <button class="btn-ghost" id="btnInventoryCloseFromMode" type="button" style="grid-column:1/-1;">Cerrar sesión</button>
         </div>
       </div>
     </div>
@@ -335,6 +345,7 @@
 </div>
 
 <div class="toast" id="toast"></div>
+<div class="refresh-indicator" id="refreshIndicator">↻ Suelta para actualizar</div>
 
 <div class="overlay" id="pinOverlay" style="display:none;">
   <div class="overlay-card">
@@ -401,10 +412,27 @@
     </details>
     <details class="card" id="inventoryOptionsDetails" style="padding:12px;margin-top:14px;margin-bottom:8px;">
       <summary style="cursor:pointer;font-weight:700;">📦 Inventario</summary>
-      <div class="catalog-hint" style="text-align:left;padding:8px 0;">Conteo físico por este celular. No registra productos en cero.</div>
+      <div class="catalog-hint" style="text-align:left;padding:8px 0;">Conteo físico por este celular. No registra productos en cero y la sesión puede durar varios días.</div>
       <button class="btn-primary btn-block" id="btnInventoryMode" type="button" style="margin-top:2px;">Entrar a modo inventario</button>
       <div class="inventory-config-line" id="inventoryDeviceInfo">Auditor de este celular: sin configurar</div>
+      <div class="inventory-config-line" id="inventorySessionInfo">Sesión: —</div>
+      <div class="field-row"><input type="checkbox" id="inventoryDebtToggle"><label for="inventoryDebtToggle" style="font-size:14px;color:var(--text);">Mostrar campo Deuda al contar</label></div>
       <button class="btn-secondary btn-block" id="btnConfigureInventoryDevice" type="button" style="margin-top:8px;">Configurar auditor de este celular</button>
+      <button class="btn-secondary btn-block" id="btnJoinInventorySession" type="button" style="margin-top:8px;">Cambiar / unirse a sesión</button>
+      <button class="btn-secondary btn-block" id="btnCloseInventorySession" type="button" style="margin-top:8px;">Cerrar sesión actual</button>
+      <button class="btn-ghost btn-block" id="btnClearInventorySession" type="button" style="margin-top:8px;color:var(--danger);">Borrar conteo local de esta sesión</button>
+    </details>
+    <details class="card" id="debtOptionsDetails" style="padding:12px;margin-top:14px;margin-bottom:8px;">
+      <summary style="cursor:pointer;font-weight:700;">💳 Deudas personales</summary>
+      <div class="catalog-hint" style="text-align:left;padding:8px 0;">Se cargan en segundo plano. Esta lista sólo aparece al abrirla.</div>
+      <div id="debtListSummary" class="inventory-config-line">Sin datos de deuda cargados.</div>
+      <div id="debtList"></div>
+    </details>
+    <details class="card" id="dataOptionsDetails" style="padding:12px;margin-top:14px;margin-bottom:8px;">
+      <summary style="cursor:pointer;font-weight:700;">↻ Datos y modo offline</summary>
+      <div id="catalogCacheInfo" class="catalog-hint" style="text-align:left;padding:8px 0;">Sin copia local todavía.</div>
+      <button class="btn-secondary btn-block" id="btnRefreshCatalog" type="button">Actualizar Compartir ahora</button>
+      <div class="catalog-hint" style="text-align:left;padding:8px 0 0;">Cada carga correcta guarda una copia local para ventas, precios e inventario. Si falla internet, se usa automáticamente.</div>
     </details>
     <div class="section-title" style="margin-top:18px;">Administración</div>
     <button class="btn-secondary btn-block" id="btnClearDay" type="button">🗑 Vaciar ventas de hoy</button>
@@ -442,9 +470,8 @@
   </div>
 </div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
 <script>
-/* ERP HTML v0.4.9 · Modo inventario local */
+/* ERP HTML v0.5.0 · Inventario por sesión + deuda opcional + catálogo offline */
 /* ============================================================
    CONFIGURACIÓN
    ============================================================ */
@@ -655,6 +682,10 @@ let inventoryAuditSchema = null;
 let inventoryAuthenticated = false;
 let inventoryFilter = "all";
 let inventorySelectedProduct = null;
+const CATALOG_CACHE_KEY = "rv_catalog_cache_v2";
+const INVENTORY_SESSION_KEY = "rv_inventory_session_current";
+let catalogLoadInProgress = false;
+let catalogOffline = false;
 
 /* ============================================================
    PIN
@@ -702,6 +733,7 @@ function startApp(){
   renderFavoritosRow();
   renderCart();
   updatePhotoQueueStatus();
+  setupPullToRefresh();
 }
 
 /* ============================================================
@@ -722,7 +754,7 @@ function setupThemeSelect(currentTheme){
   sel.addEventListener("change", ()=> applyTheme(sel.value));
 }
 function setupOptionsPanel(){
-  document.getElementById("btnOptions").addEventListener("click", ()=>{ document.getElementById("optionsOverlay").style.display = "flex"; updatePhotoQueueStatus(); updateInventoryDeviceInfo(); });
+  document.getElementById("btnOptions").addEventListener("click", ()=>{ document.getElementById("optionsOverlay").style.display = "flex"; updatePhotoQueueStatus(); updateInventoryDeviceInfo(); updateInventorySessionInfo(); updateDebtList(); updateCatalogCacheInfo(); });
   document.getElementById("closeOptions").addEventListener("click", ()=>{ document.getElementById("optionsOverlay").style.display = "none"; });
   const favToggle = document.getElementById("favToggle");
   favToggle.checked = storageGet("rv_show_favoritos", false);
@@ -971,53 +1003,87 @@ function updateSessionPillText(){
 }
 
 /* ============================================================
-   Carga del catálogo
+   Carga del catálogo + respaldo offline global
    ============================================================ */
-function loadInventory(){
-  if(!CONFIG.csvUrl || CONFIG.csvUrl.includes("PEGA_AQUI")){
-    showLoadError("No hay un CSV de inventario configurado. El catálogo embebido de prueba fue eliminado.");
-    return;
+function parseCsvText(text){
+  const rows=[]; let row=[], field="", quoted=false;
+  const src=String(text??"").replace(/^\uFEFF/,"");
+  for(let i=0;i<src.length;i++){
+    const ch=src[i];
+    if(quoted){
+      if(ch==='"' && src[i+1]==='"'){field+='"';i++;}
+      else if(ch==='"'){quoted=false;}
+      else field+=ch;
+    }else{
+      if(ch==='"') quoted=true;
+      else if(ch===','){row.push(field);field="";}
+      else if(ch==='\n'){row.push(field);rows.push(row);row=[];field="";}
+      else if(ch!=='\r') field+=ch;
+    }
   }
-  Papa.parse(CONFIG.csvUrl, {
-    download: true,
-    complete: function(results){
-      const rows = results.data.filter(r => r && r.some(c => String(c||"").trim() !== ""));
-      const headerIdx = rows.findIndex(r => r.some(c => normalize(c) === "producto"));
-      if(headerIdx === -1){ showLoadError("No encontré una columna 'Producto' en el CSV."); return; }
-      sourceHeaderRaw = rows[headerIdx].map(v=>String(v??"").trim());
-      sourceHeaderNorm = sourceHeaderRaw.map(normalize);
-      const header = sourceHeaderNorm;
-      const nameCol = header.indexOf("producto");
-      const qtyCol = header.indexOf("cantidad");
-      const modeloCol = header.indexOf("modelo");
-      const costoCol = header.indexOf("costo");
-      products = rows.slice(headerIdx+1)
-        .filter(r => r[nameCol] && String(r[nameCol]).trim() !== "")
-        .map(r => {
-          const raw={};
-          header.forEach((h,i)=>{ if(h) raw[h]=r[i]??""; });
-          return {
-            nombre: String(r[nameCol]).trim(),
-            cantidad: qtyCol>=0 ? r[qtyCol] : "",
-            modelo: modeloCol>=0 ? String(r[modeloCol]||"").trim() : "",
-            costo: costoCol>=0 ? parseNumberFlexible(r[costoCol]) : null,
-            _raw: raw
-          };
-        });
-      inventoryAuditSchema = detectInventoryAuditSchema();
-      document.getElementById("statusText").textContent = products.length + " productos cargados";
-      document.getElementById("mainApp").style.display = "block";
-      document.getElementById("footerBar").style.display = (appMode==="venta") ? "block" : "none";
-      applyCatalogView();
-      if(appMode==="inventario") renderInventory();
-    },
-    error: function(){ showLoadError("No pude descargar el catálogo. Revisa tu conexión o el link publicado."); }
+  row.push(field); if(row.length>1 || String(row[0]??"").trim()!=="") rows.push(row);
+  return rows;
+}
+function catalogCache(){ return storageGet(CATALOG_CACHE_KEY,null); }
+function relativeCacheAge(savedAt){
+  if(!savedAt)return ""; const ms=Date.now()-new Date(savedAt).getTime(); if(!Number.isFinite(ms)||ms<0)return "";
+  const h=Math.floor(ms/3600000); if(h<1)return "menos de 1 h"; if(h<48)return `${h} h`; return `${Math.floor(h/24)} días`;
+}
+function updateCatalogCacheInfo(){
+  const el=document.getElementById("catalogCacheInfo"); if(!el)return; const c=catalogCache();
+  el.textContent=c?.savedAt?`Última copia local: ${new Date(c.savedAt).toLocaleString()} · hace ${relativeCacheAge(c.savedAt)}`:"Sin copia local todavía.";
+}
+function processCatalogRows(rows,meta={}){
+  rows=(rows||[]).filter(r=>r && r.some(c=>String(c||"").trim()!==""));
+  const headerIdx=rows.findIndex(r=>r.some(c=>normalize(c)==="producto"));
+  if(headerIdx===-1) throw new Error("No encontré una columna 'Producto' en el CSV.");
+  sourceHeaderRaw=rows[headerIdx].map(v=>String(v??"").trim());
+  sourceHeaderNorm=sourceHeaderRaw.map(normalize);
+  const header=sourceHeaderNorm, nameCol=header.indexOf("producto"), qtyCol=header.indexOf("cantidad"), modeloCol=header.indexOf("modelo"), costoCol=header.indexOf("costo");
+  products=rows.slice(headerIdx+1).filter(r=>r[nameCol]&&String(r[nameCol]).trim()!=="").map(r=>{
+    const raw={}; header.forEach((h,i)=>{if(h)raw[h]=r[i]??"";});
+    return {nombre:String(r[nameCol]).trim(),cantidad:qtyCol>=0?r[qtyCol]:"",modelo:modeloCol>=0?String(r[modeloCol]||"").trim():"",costo:costoCol>=0?parseNumberFlexible(r[costoCol]):null,_raw:raw};
   });
+  inventoryAuditSchema=detectInventoryAuditSchema(); catalogOffline=!!meta.offline;
+  const age=meta.savedAt?relativeCacheAge(meta.savedAt):"";
+  document.getElementById("statusText").innerHTML=products.length+" productos cargados"+(catalogOffline?` <span class="offline-badge">OFFLINE · ${age||"copia local"}</span>`:"");
+  document.getElementById("configWarning").style.display="none";
+  document.getElementById("mainApp").style.display="block";
+  document.getElementById("footerBar").style.display=(appMode==="venta")?"block":"none";
+  applyCatalogView(); updateDebtList(); updateCatalogCacheInfo();
+  if(appMode==="inventario")renderInventory();
+}
+async function loadInventory(options={}){
+  if(catalogLoadInProgress)return; catalogLoadInProgress=true;
+  const manual=!!options.manual;
+  try{
+    if(!CONFIG.csvUrl||CONFIG.csvUrl.includes("PEGA_AQUI"))throw new Error("No hay un CSV de inventario configurado.");
+    if(navigator.onLine===false)throw new Error("offline");
+    const ctl=new AbortController(), timer=setTimeout(()=>ctl.abort(),6000);
+    let res; try{res=await fetch(CONFIG.csvUrl,{cache:"no-store",signal:ctl.signal});}finally{clearTimeout(timer);}
+    if(!res.ok)throw new Error("HTTP "+res.status);
+    const csv=await res.text(); const rows=parseCsvText(csv); processCatalogRows(rows,{offline:false});
+    storageSet(CATALOG_CACHE_KEY,{savedAt:new Date().toISOString(),csv});
+    updateCatalogCacheInfo(); if(manual)showToast("Datos actualizados");
+  }catch(err){
+    const c=catalogCache();
+    if(c?.csv){
+      try{processCatalogRows(parseCsvText(c.csv),{offline:true,savedAt:c.savedAt}); if(manual)showToast("Sin conexión · usando copia local");}
+      catch(e){showLoadError("No pude leer Compartir ni la copia local.");}
+    }else showLoadError("No pude descargar Compartir y todavía no hay una copia offline guardada.");
+  }finally{catalogLoadInProgress=false;}
 }
 function showLoadError(msg){
-  document.getElementById("statusText").textContent = "Error al cargar el catálogo";
-  document.getElementById("configWarning").style.display = "block";
-  document.getElementById("configWarning").textContent = msg;
+  document.getElementById("statusText").textContent="Error al cargar el catálogo";
+  document.getElementById("configWarning").style.display="block";
+  document.getElementById("configWarning").textContent=msg;
+}
+function setupPullToRefresh(){
+  if(window.__rvPullRefreshReady)return; window.__rvPullRefreshReady=true;
+  let startY=null,armed=false; const hint=document.getElementById("refreshIndicator");
+  document.addEventListener("touchstart",e=>{if(window.scrollY<=2&&e.touches?.length===1){startY=e.touches[0].clientY;armed=false;}else startY=null;},{passive:true});
+  document.addEventListener("touchmove",e=>{if(startY===null||!e.touches?.length)return; const dy=e.touches[0].clientY-startY; armed=dy>75; if(hint)hint.style.display=armed?"block":"none";},{passive:true});
+  document.addEventListener("touchend",()=>{const go=armed;startY=null;armed=false;if(hint)hint.style.display="none";if(go){showToast("Actualizando Compartir…");loadInventory({manual:true});}},{passive:true});
 }
 
 /* ============================================================
@@ -1046,14 +1112,22 @@ function setMode(mode){
 /* ============================================================
    Modo inventario físico (local por celular, sin Firebase)
    ============================================================ */
-function inventoryDevice(){
-  return storageGet("rv_inventory_device", {auditor:""}) || {auditor:""};
-}
+function inventoryDevice(){ return storageGet("rv_inventory_device",{auditor:""})||{auditor:""}; }
 function inventoryAuditor(){ return String(inventoryDevice().auditor||"").trim(); }
-function inventorySessionId(){ return "INV-" + todayISO(); }
-function inventoryStorageKey(){ return "rv_inventory_counts_" + inventorySessionId() + "_" + normalize(inventoryAuditor()).replace(/[^a-z0-9]+/g,"_"); }
-function inventoryCounts(){ return storageGet(inventoryStorageKey(), {}) || {}; }
-function saveInventoryCounts(v){ storageSet(inventoryStorageKey(), v); }
+function inventoryCurrentSession(){
+  let s=storageGet(INVENTORY_SESSION_KEY,null);
+  if(!s?.id){s={id:"INV-"+todayISO(),status:"open",openedAt:new Date().toISOString()};storageSet(INVENTORY_SESSION_KEY,s);}
+  return s;
+}
+function inventorySessionId(){ return inventoryCurrentSession().id; }
+function inventorySessionOpen(){ return inventoryCurrentSession().status!=="closed"; }
+function inventoryStorageKey(){ return "rv_inventory_counts_"+inventorySessionId()+"_"+normalize(inventoryAuditor()).replace(/[^a-z0-9]+/g,"_"); }
+function inventoryDebtStorageKey(){ return "rv_inventory_debts_"+inventorySessionId(); }
+function inventoryCounts(){ return storageGet(inventoryStorageKey(),{})||{}; }
+function saveInventoryCounts(v){ storageSet(inventoryStorageKey(),v); }
+function inventoryDebtEdits(){ return storageGet(inventoryDebtStorageKey(),{})||{}; }
+function saveInventoryDebtEdits(v){ storageSet(inventoryDebtStorageKey(),v); }
+function inventoryDebtFieldEnabled(){ return storageGet("rv_inventory_show_debt",false)===true; }
 function inventoryProductKey(p){ return normalize(p?.nombre||""); }
 function inventorySystemQty(p){ const n=parseNumberFlexible(p?.cantidad); return Number.isFinite(n)?n:0; }
 function inventoryProducts(){ return products.filter(p=>inventorySystemQty(p)>0); }
@@ -1073,31 +1147,31 @@ function inventoryAgeDays(dateIso){
   return Math.round((b-a)/86400000);
 }
 function detectInventoryAuditSchema(){
-  const norm=sourceHeaderNorm||[];
-  const schemas=[];
+  const norm=sourceHeaderNorm||[], schemas=[];
   const globalDateIdx=norm.findIndex(h=>/^(fecha\s+(ultimo|último)(\s+conteo)?|(ultimo|último)\s+conteo|fecha\s+inventario)$/.test(h));
-
-  // Formato: Auditor 1 | Conteo 1 | Fecha 1, Auditor 2 | Conteo 2 | Fecha 2...
+  const debtIdx=norm.findIndex(h=>h==="deuda"||h==="deuda personal");
   norm.forEach((h,i)=>{
-    const m=h.match(/^auditor\s*(\d+)$/); if(!m)return;
-    const n=m[1]; const countIdx=norm.findIndex(x=>x===`conteo ${n}`||x===`conteo${n}`);
-    const dateIdx=norm.findIndex(x=>x===`fecha ${n}`||x===`fecha${n}`||x===`fecha conteo ${n}`);
+    const m=h.match(/^auditor\s*(\d+)$/); if(!m)return; const n=m[1];
+    const countIdx=norm.findIndex(x=>x===`conteo ${n}`||x===`conteo${n}`), dateIdx=norm.findIndex(x=>x===`fecha ${n}`||x===`fecha${n}`||x===`fecha conteo ${n}`);
     if(countIdx>=0)schemas.push({type:"indexed",auditorIdx:i,countIdx,dateIdx});
   });
-
-  // Formato: Conteo JRZ | Fecha JRZ, Conteo Pedro | Fecha Pedro...
   norm.forEach((h,i)=>{
-    const m=h.match(/^conteo\s+(.+)$/); if(!m)return;
-    const suffix=m[1].trim();
-    if(/^\d+$/.test(suffix)||/^(ultimo|último)$/.test(suffix))return;
+    const m=h.match(/^conteo\s+(.+)$/); if(!m)return; const suffix=m[1].trim(); if(/^\d+$/.test(suffix)||/^(ultimo|último)$/.test(suffix))return;
     const dateIdx=norm.findIndex(x=>x===`fecha ${suffix}`||x===`fecha conteo ${suffix}`||x===`ultimo conteo ${suffix}`||x===`último conteo ${suffix}`);
-    schemas.push({type:"named",auditor:suffix,countIdx:i,dateIdx});
+    schemas.push({type:"named",auditor:sourceHeaderRaw[i]||suffix,countIdx:i,dateIdx});
   });
-
-  // Formato simple: Auditor | Conteo | Fecha
   const auditorIdx=norm.indexOf("auditor"), countIdx=norm.indexOf("conteo"), dateIdx=norm.indexOf("fecha");
   if(auditorIdx>=0&&countIdx>=0)schemas.push({type:"simple",auditorIdx,countIdx,dateIdx});
-  return {schemas,globalDateIdx};
+  // Fórmula dinámica de Compartir: Producto | Cantidad | Modelo | Costo | JRZ | Pedro | ... | Deuda
+  const reserved=new Set(["producto","cantidad","modelo","costo","deuda","deuda personal","auditor","conteo","fecha","notas","nota","precio","venta","canal","vendedor"]);
+  norm.forEach((h,i)=>{
+    if(!h||reserved.has(h)||/^fecha\b/.test(h)||/^conteo\s+/.test(h)||/^auditor\s*\d+$/.test(h))return;
+    if(i<=Math.max(norm.indexOf("producto"),norm.indexOf("cantidad"),norm.indexOf("modelo"),norm.indexOf("costo")))return;
+    const hasNumber=products.some(p=>{const v=p?._raw?.[h];return String(v??"").trim()!==""&&Number.isFinite(parseNumberFlexible(v));});
+    if(hasNumber)schemas.push({type:"direct",auditor:sourceHeaderRaw[i]||h,countIdx:i,dateIdx:-1});
+  });
+  const uniq=[]; const seen=new Set(); for(const sc of schemas){const k=sc.type+":"+sc.countIdx+":"+(sc.auditor||sc.auditorIdx);if(!seen.has(k)){seen.add(k);uniq.push(sc);}}
+  return {schemas:uniq,globalDateIdx,debtIdx};
 }
 function inventorySheetAudits(p){
   if(!p?._raw||!inventoryAuditSchema)return [];
@@ -1105,31 +1179,29 @@ function inventorySheetAudits(p){
   const globalDate=inventoryAuditSchema.globalDateIdx>=0?parseInventoryDate(vals[inventoryAuditSchema.globalDateIdx]):"";
   const out=[];
   inventoryAuditSchema.schemas.forEach(sc=>{
-    const count=parseNumberFlexible(vals[sc.countIdx]);
-    if(!Number.isFinite(count)||count<0)return;
-    let auditor="";
-    if(sc.type==="named")auditor=sc.auditor;
-    else auditor=String(vals[sc.auditorIdx]??"").trim();
-    if(!auditor)return;
-    const date=sc.dateIdx>=0?parseInventoryDate(vals[sc.dateIdx]):globalDate;
+    const count=parseNumberFlexible(vals[sc.countIdx]); if(!Number.isFinite(count)||count<0)return;
+    let auditor=""; if(sc.type==="named"||sc.type==="direct")auditor=sc.auditor; else auditor=String(vals[sc.auditorIdx]??"").trim();
+    if(!auditor)return; const date=sc.dateIdx>=0?parseInventoryDate(vals[sc.dateIdx]):globalDate;
     out.push({auditor,count,date,source:"sheet"});
   });
-  // elimina duplicados conservando el último valor detectado por auditor
-  const m=new Map(); out.forEach(x=>m.set(normalize(x.auditor),x)); return [...m.values()];
+  const m=new Map();out.forEach(x=>m.set(normalize(x.auditor),x));return [...m.values()];
+}
+function inventorySheetDebt(p){
+  if(!p?._raw||!inventoryAuditSchema||inventoryAuditSchema.debtIdx<0)return 0;
+  const h=sourceHeaderNorm[inventoryAuditSchema.debtIdx], n=parseNumberFlexible(p._raw[h]); return Number.isFinite(n)&&n>0?n:0;
+}
+function inventoryDebtFor(p){
+  const edit=inventoryDebtEdits()[inventoryProductKey(p)]; if(edit&&Object.prototype.hasOwnProperty.call(edit,"deuda"))return Math.max(0,Number(edit.deuda)||0);
+  return inventorySheetDebt(p);
 }
 function inventoryLastDate(p){
-  const audits=inventorySheetAudits(p); let dates=audits.map(x=>x.date).filter(Boolean);
-  if(inventoryAuditSchema?.globalDateIdx>=0){
-    const h=sourceHeaderNorm[inventoryAuditSchema.globalDateIdx]; const d=parseInventoryDate(p?._raw?.[h]); if(d)dates.push(d);
-  }
+  const audits=inventorySheetAudits(p);let dates=audits.map(x=>x.date).filter(Boolean);
+  if(inventoryAuditSchema?.globalDateIdx>=0){const h=sourceHeaderNorm[inventoryAuditSchema.globalDateIdx];const d=parseInventoryDate(p?._raw?.[h]);if(d)dates.push(d);}
   return dates.sort().pop()||"";
 }
 function inventoryCurrentAudits(p){
-  const currentDate=todayISO();
-  const map=new Map();
-  inventorySheetAudits(p).filter(x=>x.date===currentDate).forEach(x=>map.set(normalize(x.auditor),x));
-  const local=inventoryCounts()[inventoryProductKey(p)];
-  if(local){ map.set(normalize(inventoryAuditor()),{auditor:inventoryAuditor(),count:Number(local.conteo)||0,date:currentDate,source:"local"}); }
+  const map=new Map(); inventorySheetAudits(p).forEach(x=>map.set(normalize(x.auditor),x));
+  const local=inventoryCounts()[inventoryProductKey(p)]; if(local)map.set(normalize(inventoryAuditor()),{auditor:inventoryAuditor(),count:Number(local.conteo)||0,date:parseInventoryDate(local.updatedAt)||todayISO(),source:"local"});
   return [...map.values()];
 }
 function inventoryStateFor(p){
@@ -1144,7 +1216,7 @@ function inventoryStateLabel(state){ return state==="ok"?"Correcto":state==="sys
 function inventoryActiveAuditors(){
   const names=new Map();
   if(inventoryAuditor())names.set(normalize(inventoryAuditor()),inventoryAuditor());
-  inventoryProducts().forEach(p=>inventorySheetAudits(p).filter(x=>x.date===todayISO()).forEach(x=>names.set(normalize(x.auditor),x.auditor)));
+  inventoryProducts().forEach(p=>inventorySheetAudits(p).forEach(x=>names.set(normalize(x.auditor),x.auditor)));
   return [...names.values()];
 }
 function inventoryStats(){
@@ -1164,26 +1236,72 @@ function inventoryStats(){
   }
   return {total:pool.length,counted,pending:Math.max(0,pool.length-counted),ok,system,auditors,consolidated,active};
 }
+function updateInventorySessionInfo(){
+  const s=inventoryCurrentSession(), text=`Sesión: ${s.id} · ${s.status==="closed"?"cerrada":"abierta"}`;
+  const el=document.getElementById("inventorySessionInfo");if(el)el.textContent=text;
+  const lab=document.getElementById("inventorySessionLabel");if(lab)lab.textContent=text;
+}
+function generateInventorySessionId(){
+  const base="INV-"+todayISO(), auditor=normalize(inventoryAuditor()).replace(/[^a-z0-9]+/g,"_"); let id=base,n=2;
+  while(localStorage.getItem(`rv_inventory_counts_${id}_${auditor}`)!==null){id=`${base}-${n++}`;}
+  return id;
+}
+function setInventorySession(id){
+  id=String(id||"").trim(); if(!id)return false; storageSet(INVENTORY_SESSION_KEY,{id,status:"open",openedAt:new Date().toISOString()}); inventorySelectedProduct=null; updateInventorySessionInfo(); return true;
+}
+function ensureOpenInventorySession(){
+  const s=inventoryCurrentSession(); if(s.status!=="closed")return s;
+  const suggested=generateInventorySessionId(); const id=prompt("ID de la nueva sesión de inventario:",suggested); if(id===null)return null; setInventorySession(id||suggested); return inventoryCurrentSession();
+}
+function joinInventorySession(){
+  const current=inventorySessionId(), id=prompt("Escribe el ID de la sesión a usar en este celular:",current); if(id===null)return;
+  if(!String(id).trim()){showToast("Escribe un ID de sesión");return;} setInventorySession(String(id).trim()); showToast("Sesión: "+inventorySessionId()); if(appMode==="inventario")renderInventory();
+}
+function closeInventorySession(){
+  const s=inventoryCurrentSession(); if(s.status==="closed"){showToast("La sesión ya está cerrada");return;}
+  if(!confirm(`Cerrar ${s.id}? El conteo NO se borrará; quedará guardado en este celular.`))return;
+  storageSet(INVENTORY_SESSION_KEY,{...s,status:"closed",closedAt:new Date().toISOString()}); updateInventorySessionInfo(); inventoryAuthenticated=false; if(appMode==="inventario")setMode("venta"); showToast("Sesión cerrada · conteo conservado");
+}
+function clearCurrentInventorySession(){
+  const id=inventorySessionId(); const phrase=prompt(`Esto borra sólo el conteo LOCAL de ${id} en este celular. Escribe BORRAR:`); if(normalize(phrase)!=="borrar")return;
+  localStorage.removeItem(inventoryStorageKey()); localStorage.removeItem(inventoryDebtStorageKey()); inventorySelectedProduct=null; if(appMode==="inventario")renderInventory(); updateDebtList(); showToast("Conteo local borrado");
+}
+function saveInventoryDebt(p,value){
+  const n=parseInt(value,10); if(!Number.isFinite(n)||n<0){showToast("Deuda inválida");return false;}
+  const all=inventoryDebtEdits(), key=inventoryProductKey(p); all[key]={nombre:p.nombre,deuda:n,updatedAt:new Date().toISOString()}; saveInventoryDebtEdits(all); updateDebtList(); return true;
+}
+function renderDebtRows(){
+  return products.map(p=>({p,deuda:inventoryDebtFor(p)})).filter(x=>x.deuda>0).sort((a,b)=>a.p.nombre.localeCompare(b.p.nombre,"es"));
+}
+function updateDebtList(){
+  const list=document.getElementById("debtList"), sum=document.getElementById("debtListSummary"); if(!list||!sum)return;
+  const rows=renderDebtRows(), pieces=rows.reduce((a,x)=>a+x.deuda,0), value=rows.reduce((a,x)=>a+x.deuda*(Number(x.p.costo)||0),0);
+  sum.textContent=rows.length?`${rows.length} productos · ${pieces} piezas · costo aprox. ${money(value)}`:(inventoryAuditSchema?.debtIdx>=0||Object.keys(inventoryDebtEdits()).length?"Sin deudas pendientes":"Aún no hay columna Deuda cargada en Compartir");
+  list.innerHTML=""; rows.forEach(x=>{const d=document.createElement("div");d.className="debt-list-row";d.innerHTML=`<span></span><strong>${x.deuda}</strong>`;d.querySelector("span").textContent=x.p.nombre;list.appendChild(d);});
+}
 function updateInventoryDeviceInfo(){
-  const el=document.getElementById("inventoryDeviceInfo"); if(el)el.textContent="Auditor de este celular: "+(inventoryAuditor()||"sin configurar");
+  const el=document.getElementById("inventoryDeviceInfo"); if(el)el.textContent="Auditor de este celular: "+(inventoryAuditor()||"sin configurar"); updateInventorySessionInfo();
 }
 function setupInventoryMode(){
   updateInventoryDeviceInfo();
-  document.getElementById("btnInventoryMode")?.addEventListener("click",()=>{ document.getElementById("optionsOverlay").style.display="none"; openInventoryLogin(false); });
+  const debtToggle=document.getElementById("inventoryDebtToggle"); if(debtToggle){debtToggle.checked=inventoryDebtFieldEnabled();debtToggle.addEventListener("change",()=>{storageSet("rv_inventory_show_debt",debtToggle.checked);if(appMode==="inventario"&&inventorySelectedProduct)openInventoryCapture(inventorySelectedProduct,false);});}
+  document.getElementById("btnInventoryMode")?.addEventListener("click",()=>{document.getElementById("optionsOverlay").style.display="none";openInventoryLogin(false);});
   document.getElementById("btnConfigureInventoryDevice")?.addEventListener("click",()=>openInventoryLogin(true));
+  document.getElementById("btnJoinInventorySession")?.addEventListener("click",joinInventorySession);
+  document.getElementById("btnCloseInventorySession")?.addEventListener("click",closeInventorySession);
+  document.getElementById("btnClearInventorySession")?.addEventListener("click",clearCurrentInventorySession);
+  document.getElementById("btnInventoryCloseFromMode")?.addEventListener("click",closeInventorySession);
+  document.getElementById("btnRefreshCatalog")?.addEventListener("click",()=>{showToast("Actualizando Compartir…");loadInventory({manual:true});});
   document.getElementById("inventoryLoginClose")?.addEventListener("click",closeInventoryLogin);
   document.getElementById("inventoryLoginSubmit")?.addEventListener("click",submitInventoryLogin);
   document.getElementById("inventoryPinInput")?.addEventListener("keydown",e=>{if(e.key==="Enter")submitInventoryLogin();});
   document.getElementById("inventoryAuditorSetup")?.addEventListener("keydown",e=>{if(e.key==="Enter")document.getElementById("inventoryPinInput")?.focus();});
   document.getElementById("btnExitInventory")?.addEventListener("click",()=>{inventoryAuthenticated=false;setMode("venta");});
   document.getElementById("inventorySearchInput")?.addEventListener("input",renderInventoryResults);
-  document.getElementById("inventoryFilterRow")?.addEventListener("click",e=>{
-    const b=e.target.closest("[data-filter]"); if(!b)return; inventoryFilter=b.dataset.filter||"all";
-    document.querySelectorAll("#inventoryFilterRow .inventory-filter").forEach(x=>x.classList.toggle("active",x===b)); renderInventoryResults();
-  });
+  document.getElementById("inventoryFilterRow")?.addEventListener("click",e=>{const b=e.target.closest("[data-filter]");if(!b)return;inventoryFilter=b.dataset.filter||"all";document.querySelectorAll("#inventoryFilterRow .inventory-filter").forEach(x=>x.classList.toggle("active",x===b));renderInventoryResults();});
   document.getElementById("btnInventoryCsv")?.addEventListener("click",exportInventoryCsv);
   document.getElementById("btnInventoryCopy")?.addEventListener("click",copyInventoryTsv);
-  document.getElementById("btnInventoryRefresh")?.addEventListener("click",()=>{ showToast("Actualizando Compartir…"); loadInventory(); });
+  document.getElementById("btnInventoryRefresh")?.addEventListener("click",()=>{showToast("Actualizando Compartir…");loadInventory({manual:true});});
 }
 function openInventoryLogin(forceSetup){
   const auditor=inventoryAuditor(); const setup=forceSetup||!auditor;
@@ -1204,11 +1322,12 @@ function submitInventoryLogin(){
     const name=document.getElementById("inventoryAuditorSetup").value.trim(); if(!name){err.textContent="Escribe el auditor de este celular";return;}
     storageSet("rv_inventory_device",{auditor:name}); updateInventoryDeviceInfo();
   }
-  inventoryAuthenticated=true; closeInventoryLogin(); document.getElementById("optionsOverlay").style.display="none"; setMode("inventario");
+  if(!ensureOpenInventorySession())return; inventoryAuthenticated=true; closeInventoryLogin(); document.getElementById("optionsOverlay").style.display="none"; setMode("inventario");
 }
 function renderInventory(){
   if(!inventoryAuthenticated)return;
-  document.getElementById("inventoryAuditorLabel").textContent=`Auditor · ${inventoryAuditor()} · ${inventorySessionId()}`;
+  if(!inventorySessionOpen()){showToast("La sesión está cerrada");inventoryAuthenticated=false;setMode("venta");return;}
+  document.getElementById("inventoryAuditorLabel").textContent=`Auditor · ${inventoryAuditor()}`; updateInventorySessionInfo();
   const st=inventoryStats(); const pct=st.total?Math.round(st.counted/st.total*100):0;
   document.getElementById("inventoryProgressFill").style.width=pct+"%";
   document.getElementById("inventoryProgressFill").classList.toggle("consolidated",st.consolidated);
@@ -1245,25 +1364,31 @@ function renderInventoryResults(){
   });
 }
 function openInventoryCapture(p,focus=true){
-  inventorySelectedProduct=p; const card=document.getElementById("inventoryCaptureCard"), local=inventoryCounts()[inventoryProductKey(p)], audits=inventoryCurrentAudits(p), last=inventoryLastDate(p);
+  inventorySelectedProduct=p; const card=document.getElementById("inventoryCaptureCard"), local=inventoryCounts()[inventoryProductKey(p)], audits=inventoryCurrentAudits(p), last=inventoryLastDate(p), debt=inventoryDebtFor(p);
   card.style.display="block";
   const other=audits.filter(x=>normalize(x.auditor)!==normalize(inventoryAuditor()));
   const otherText=other.length?other.map(x=>`${escapeHtmlText(x.auditor)}: <b>${Number(x.count)}</b>`).join(" · "):"Sin otros auditores cargados en esta sesión";
-  card.innerHTML=`<div class="inventory-capture-head"><div><div class="selected-title" id="invCaptureName"></div><div class="inventory-current">Tu conteo de esta sesión: <strong>${local?Number(local.conteo):0}</strong></div></div><div class="inventory-system-qty">Sistema<strong>${inventorySystemQty(p)}</strong></div></div>\n    <div class="inventory-entry"><button type="button" id="invMinus">−</button><input id="invQtyInput" type="number" inputmode="numeric" min="1" step="1" placeholder="Cantidad"><button type="button" id="invPlus">+</button></div>\n    <button class="btn-primary" id="invAddBtn" type="button">Sumar al conteo</button>\n    ${local?'<button class="btn-ghost btn-block" id="invCorrectBtn" type="button" style="margin-top:7px;font-size:12px;padding:9px;">Corregir total actual</button>':''}\n    <div class="inventory-note">Sólo registra lo que encontraste físicamente. No se guardan ceros.</div>\n    <div class="inventory-history">${otherText}${last?`<br>Último inventario compartido: ${escapeHtmlText(last)}`:""}</div>`;
+  const debtBox=inventoryDebtFieldEnabled()?`<div class="inventory-debt-box"><div class="inventory-debt-row"><div class="field"><label for="invDebtInput">Deuda personal actual</label><input id="invDebtInput" type="number" inputmode="numeric" min="0" step="1" value="${debt}"></div><button class="btn-secondary" id="invDebtSave" type="button">Guardar</button></div><div class="inventory-note">Es un dato global del producto. 0 significa sin deuda.</div></div>`:"";
+  card.innerHTML=`<div class="inventory-capture-head"><div><div class="selected-title" id="invCaptureName"></div><div class="inventory-current">Tu conteo de esta sesión: <strong>${local?Number(local.conteo):0}</strong></div></div><div class="inventory-system-qty">Sistema<strong>${inventorySystemQty(p)}</strong></div></div>
+    <div class="inventory-entry"><button type="button" id="invMinus">−</button><input id="invQtyInput" type="number" inputmode="numeric" min="1" step="1" placeholder="Cantidad"><button type="button" id="invPlus">+</button></div>
+    <button class="btn-primary" id="invAddBtn" type="button">Sumar al conteo</button>
+    ${local?'<button class="btn-ghost btn-block" id="invCorrectBtn" type="button" style="margin-top:7px;font-size:12px;padding:9px;">Corregir total actual</button>':''}
+    ${debtBox}
+    <div class="inventory-note">Sólo registra lo que encontraste físicamente. No se guardan ceros.</div>
+    <div class="inventory-history">${otherText}${last?`<br>Último inventario compartido: ${escapeHtmlText(last)}`:""}</div>`;
   document.getElementById("invCaptureName").textContent=p.nombre;
-  const inp=document.getElementById("invQtyInput");
-  const bump=d=>{const n=Math.max(1,(parseInt(inp.value,10)||1)+d);inp.value=n;};
+  const inp=document.getElementById("invQtyInput"), bump=d=>{const n=Math.max(1,(parseInt(inp.value,10)||1)+d);inp.value=n;};
   document.getElementById("invMinus").addEventListener("click",()=>bump(-1)); document.getElementById("invPlus").addEventListener("click",()=>bump(1));
-  document.getElementById("invAddBtn").addEventListener("click",()=>saveInventoryIncrement(p));
-  inp.addEventListener("keydown",e=>{if(e.key==="Enter"){e.preventDefault();saveInventoryIncrement(p);}});
+  document.getElementById("invAddBtn").addEventListener("click",()=>saveInventoryIncrement(p)); inp.addEventListener("keydown",e=>{if(e.key==="Enter"){e.preventDefault();saveInventoryIncrement(p);}});
   document.getElementById("invCorrectBtn")?.addEventListener("click",()=>correctInventoryTotal(p));
+  document.getElementById("invDebtSave")?.addEventListener("click",()=>{const v=document.getElementById("invDebtInput")?.value;if(saveInventoryDebt(p,v)){renderInventory();showToast("Deuda actualizada");}});
   if(focus)setTimeout(()=>inp.focus(),40);
 }
 function saveInventoryIncrement(p){
   const inp=document.getElementById("invQtyInput"), add=parseInt(inp?.value,10);
   if(!Number.isFinite(add)||add<=0){showToast("Escribe una cantidad mayor a 0");inp?.focus();return;}
-  const all=inventoryCounts(), key=inventoryProductKey(p), prev=Number(all[key]?.conteo)||0;
-  all[key]={nombre:p.nombre,conteo:prev+add,updatedAt:new Date().toISOString()}; saveInventoryCounts(all);
+  const debtInp=document.getElementById("invDebtInput"); if(debtInp&&!saveInventoryDebt(p,debtInp.value))return;
+  const all=inventoryCounts(), key=inventoryProductKey(p), prev=Number(all[key]?.conteo)||0; all[key]={nombre:p.nombre,conteo:prev+add,updatedAt:new Date().toISOString()}; saveInventoryCounts(all);
   inventorySelectedProduct=null; document.getElementById("inventoryCaptureCard").style.display="none";
   const q=document.getElementById("inventorySearchInput"); q.value=""; renderInventory(); showToast(`${p.nombre}: ${prev+add}`); setTimeout(()=>q.focus(),30);
 }
@@ -1274,19 +1399,21 @@ function correctInventoryTotal(p){
   all[key]={nombre:p.nombre,conteo:n,updatedAt:new Date().toISOString()}; saveInventoryCounts(all); renderInventory(); showToast("Conteo corregido");
 }
 function inventoryExportRows(){
-  const auditor=inventoryAuditor(), session=inventorySessionId(), all=inventoryCounts();
-  return Object.values(all).sort((a,b)=>String(a.nombre).localeCompare(String(b.nombre),"es")).map(x=>[session,x.updatedAt||new Date().toISOString(),auditor,x.nombre,Number(x.conteo)||0]);
+  const auditor=inventoryAuditor(), session=inventorySessionId(), counts=inventoryCounts(), debts=inventoryDebtEdits(), keys=new Set([...Object.keys(counts),...Object.keys(debts)]), rows=[];
+  [...keys].sort((a,b)=>String(counts[a]?.nombre||debts[a]?.nombre||a).localeCompare(String(counts[b]?.nombre||debts[b]?.nombre||b),"es")).forEach(k=>{
+    const c=counts[k],d=debts[k], nombre=c?.nombre||d?.nombre||k, fecha=[c?.updatedAt,d?.updatedAt].filter(Boolean).sort().pop()||new Date().toISOString();
+    rows.push([session,fecha,auditor,nombre,c?Number(c.conteo)||0:"",d&&Object.prototype.hasOwnProperty.call(d,"deuda")?Math.max(0,Number(d.deuda)||0):""]);
+  }); return rows;
 }
-function csvCell(v){ const s=String(v??""); return /[",\n\r]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s; }
-function buildInventoryCsv(){ return [["Sesion","Fecha","Auditor","Articulo","Conteo"],...inventoryExportRows()].map(r=>r.map(csvCell).join(",")).join("\r\n"); }
+function csvCell(v){const s=String(v??"");return /[",\n\r]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s;}
+function buildInventoryCsv(){return [["Sesion","Fecha","Auditor","Articulo","Conteo","Deuda"],...inventoryExportRows()].map(r=>r.map(csvCell).join(",")).join("\r\n");}
 function exportInventoryCsv(){
-  const rows=inventoryExportRows(); if(!rows.length){showToast("Aún no hay conteos");return;}
-  const blob=new Blob(["\ufeff"+buildInventoryCsv()],{type:"text/csv;charset=utf-8"}); const safe=slugify(inventoryAuditor())||"auditor";
-  downloadBlob(blob,`${inventorySessionId()}_${safe}.csv`); showToast(`${rows.length} conteos exportados`);
+  const rows=inventoryExportRows();if(!rows.length){showToast("Aún no hay conteos ni deudas");return;}
+  const blob=new Blob(["\ufeff"+buildInventoryCsv()],{type:"text/csv;charset=utf-8"}),safe=slugify(inventoryAuditor())||"auditor";downloadBlob(blob,`${inventorySessionId()}_${safe}.csv`);showToast(`${rows.length} registros exportados`);
 }
 async function copyInventoryTsv(){
-  const rows=inventoryExportRows(); if(!rows.length){showToast("Aún no hay conteos");return;}
-  const text=[["Sesion","Fecha","Auditor","Articulo","Conteo"],...rows].map(r=>r.join("\t")).join("\n"); const ok=await copyText(text); showToast(ok?"Conteos copiados para Sheets":"No se pudo copiar");
+  const rows=inventoryExportRows();if(!rows.length){showToast("Aún no hay conteos ni deudas");return;}
+  const text=[["Sesion","Fecha","Auditor","Articulo","Conteo","Deuda"],...rows].map(r=>r.join("\t")).join("\n"),ok=await copyText(text);showToast(ok?"Conteos copiados para Sheets":"No se pudo copiar");
 }
 
 /* ============================================================
