@@ -477,7 +477,7 @@
 </div>
 
 <script>
-/* ERP HTML v0.5.3 · resumen global de auditores + sincronización ERP + deuda + offline */
+/* ERP HTML v0.5.4 · progreso global por productos únicos + sincronización ERP + deuda + offline */
 /* ============================================================
    CONFIGURACIÓN
    ============================================================ */
@@ -1313,14 +1313,12 @@ function inventoryHasOwnCount(p){ return !!inventoryOwnAudit(p); }
 function inventoryStateFor(p,activeAuditors=null){
   const system=inventorySystemQty(p), audits=inventoryCurrentAudits(p);
   if(!audits.length)return "pending";
-  const active=Array.isArray(activeAuditors)?activeAuditors:inventoryActiveAuditors();
-  const present=new Set(audits.map(x=>normalize(x.auditor)));
   const vals=audits.map(x=>Number(x.count));
-  // Si ya hay dos conteos y difieren, interesa verlo aunque aún falte otro auditor.
+  // Los auditores pueden repartirse el inventario: basta un conteo para considerar el producto revisado.
+  // Si dos o más contaron el mismo producto y no coinciden, se marca como diferencia entre auditores.
   if(vals.length>=2 && !vals.every(v=>v===vals[0]))return "auditors";
-  // Con varios auditores, un producto sólo está revisado cuando todos los auditores detectados lo contaron.
-  if(active.length && active.some(a=>!present.has(normalize(a))))return "pending";
-  if(vals.some(v=>v!==system))return "system";
+  // Si hay uno o varios conteos coincidentes, se comparan contra el sistema.
+  if(vals[0]!==system)return "system";
   return "ok";
 }
 function inventoryStateLabel(state){ return state==="ok"?"Correcto":state==="system"?"Vs sistema":state==="auditors"?"Dif. auditores":"Pendiente"; }
@@ -1344,16 +1342,15 @@ function inventorySyncStatus(){
   const pending=countPending+debtPending;
   if(catalogOffline)return {kind:"offline",text:pending?`Offline · ${pending} cambio${pending===1?"":"s"} local${pending===1?"":"es"}`:"Offline · usando copia local"};
   if(pending===0)return {kind:"ok",text:"✓ Sincronizado con Compartir"};
-  return {kind:"pending",text:`${pending} cambio${pending===1?"":"s"} local${pending===1?"":"es"} pendiente${pending===1?"":"s"}`};
+  return {kind:"pending",text:`⚠ ${pending} dato${pending===1?"":"s"} local${pending===1?"":"es"} sin confirmar en Compartir`};
 }
 function inventoryStats(){
   const pool=inventoryProducts(), active=inventoryActiveAuditors();
   let reviewed=0,ok=0,system=0,auditors=0;
   pool.forEach(p=>{
-    const audits=inventoryCurrentAudits(p), present=new Set(audits.map(x=>normalize(x.auditor)));
-    const complete=active.length>0 && active.every(a=>present.has(normalize(a)));
-    if(complete)reviewed++;
-    const st=inventoryStateFor(p,active); if(st==="ok")ok++; else if(st==="system")system++; else if(st==="auditors")auditors++;
+    const st=inventoryStateFor(p,active);
+    if(st!=="pending")reviewed++;
+    if(st==="ok")ok++; else if(st==="system")system++; else if(st==="auditors")auditors++;
   });
   const pending=Math.max(0,pool.length-reviewed);
   const consolidated=pool.length>0 && reviewed===pool.length && system===0 && auditors===0 && ok===pool.length;
