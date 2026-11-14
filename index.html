@@ -156,6 +156,11 @@
   .inventory-kpi.sys strong{color:#f0b54a;}
   .inventory-kpi.audit strong{color:var(--danger);}
   .inventory-consolidated{display:none;border:1px solid #28d7ff;background:rgba(40,215,255,.09);color:#8eeaff;border-radius:12px;padding:10px 12px;text-align:center;font-size:14px;font-weight:800;letter-spacing:.04em;margin-top:10px;}
+  .inventory-sync{font-size:11.5px;font-weight:700;margin-top:5px;}
+  .inventory-sync.ok{color:#53e6a7;}
+  .inventory-sync.pending{color:#f0b54a;}
+  .inventory-sync.offline{color:var(--text-muted);}
+  .inventory-auditor-progress{font-size:11.5px;color:var(--text-muted);margin-top:7px;line-height:1.45;}
   .inventory-filter-row{display:flex;gap:6px;overflow-x:auto;padding:2px 0 10px;-webkit-overflow-scrolling:touch;}
   .inventory-filter{flex-shrink:0;background:var(--surface-2);border:1px solid var(--border);color:var(--text-muted);border-radius:18px;padding:7px 10px;font-size:11.5px;font-weight:700;}
   .inventory-filter.active{border-color:var(--accent);color:var(--text);}
@@ -279,13 +284,13 @@
     <div id="inventorySection" style="display:none;">
       <div class="card">
         <div class="inventory-top">
-          <div><div class="inventory-title">Inventario físico</div><div class="inventory-sub" id="inventoryAuditorLabel">Auditor · —</div><div class="inventory-sub" id="inventorySessionLabel">Sesión · —</div></div>
+          <div><div class="inventory-title">Inventario físico</div><div class="inventory-sub" id="inventoryAuditorLabel">Auditor · —</div><div class="inventory-sub" id="inventorySessionLabel">Sesión · —</div><div class="inventory-sync" id="inventorySyncLabel">Comprobando sincronización…</div></div>
           <button class="btn-secondary" id="btnExitInventory" type="button" style="padding:8px 11px;font-size:12px;">Salir</button>
         </div>
         <div class="inventory-progress"><div class="inventory-progress-fill" id="inventoryProgressFill"></div></div>
-        <div class="inventory-progress-line"><span id="inventoryProgressText">0 / 0</span><span id="inventoryProgressPct">0%</span></div>
+        <div class="inventory-progress-line"><span id="inventoryProgressText">0 / 0</span><span id="inventoryProgressPct">0%</span></div><div class="inventory-auditor-progress" id="inventoryAuditorProgress"></div>
         <div class="inventory-kpis">
-          <div class="inventory-kpi"><strong id="invKpiCounted">0</strong><span>Contados</span></div>
+          <div class="inventory-kpi"><strong id="invKpiCounted">0</strong><span>Revisados</span></div>
           <div class="inventory-kpi"><strong id="invKpiPending">0</strong><span>Pendientes</span></div>
           <div class="inventory-kpi ok"><strong id="invKpiOk">0</strong><span>Correctos</span></div>
           <div class="inventory-kpi sys"><strong id="invKpiSystem">0</strong><span>vs sistema</span></div>
@@ -472,7 +477,7 @@
 </div>
 
 <script>
-/* ERP HTML v0.5.2 · Compartir manda + auditoría dinámica + deuda + offline */
+/* ERP HTML v0.5.3 · resumen global de auditores + sincronización ERP + deuda + offline */
 /* ============================================================
    CONFIGURACIÓN
    ============================================================ */
@@ -1305,11 +1310,16 @@ function inventoryOwnAudit(p){
   return inventorySheetAuditForAuditor(p,inventoryAuditor());
 }
 function inventoryHasOwnCount(p){ return !!inventoryOwnAudit(p); }
-function inventoryStateFor(p){
-  const system=inventorySystemQty(p); const audits=inventoryCurrentAudits(p);
+function inventoryStateFor(p,activeAuditors=null){
+  const system=inventorySystemQty(p), audits=inventoryCurrentAudits(p);
   if(!audits.length)return "pending";
+  const active=Array.isArray(activeAuditors)?activeAuditors:inventoryActiveAuditors();
+  const present=new Set(audits.map(x=>normalize(x.auditor)));
   const vals=audits.map(x=>Number(x.count));
+  // Si ya hay dos conteos y difieren, interesa verlo aunque aún falte otro auditor.
   if(vals.length>=2 && !vals.every(v=>v===vals[0]))return "auditors";
+  // Con varios auditores, un producto sólo está revisado cuando todos los auditores detectados lo contaron.
+  if(active.length && active.some(a=>!present.has(normalize(a))))return "pending";
   if(vals.some(v=>v!==system))return "system";
   return "ok";
 }
@@ -1320,22 +1330,34 @@ function inventoryActiveAuditors(){
   inventoryProducts().forEach(p=>inventorySheetAudits(p).forEach(x=>names.set(normalize(x.auditor),x.auditor)));
   return [...names.values()];
 }
-function inventoryStats(){
-  const pool=inventoryProducts();
-  let counted=0,ok=0,system=0,auditors=0;
-  pool.forEach(p=>{
-    if(inventoryHasOwnCount(p))counted++;
-    const st=inventoryStateFor(p); if(st==="ok")ok++; else if(st==="system")system++; else if(st==="auditors")auditors++;
+function inventoryAuditorProgress(active=null){
+  const pool=inventoryProducts(), auditors=active||inventoryActiveAuditors();
+  return auditors.map(a=>{
+    let n=0; const key=normalize(a);
+    pool.forEach(p=>{ if(inventoryCurrentAudits(p).some(x=>normalize(x.auditor)===key)) n++; });
+    return {auditor:a,count:n,total:pool.length};
   });
-  const active=inventoryActiveAuditors();
-  let consolidated=pool.length>0 && active.length>0 && system===0 && auditors===0;
-  if(consolidated){
-    for(const p of pool){
-      const m=new Map(inventoryCurrentAudits(p).map(x=>[normalize(x.auditor),Number(x.count)]));
-      if(active.some(a=>!m.has(normalize(a))) || [...m.values()].some(v=>v!==inventorySystemQty(p))){ consolidated=false; break; }
-    }
-  }
-  return {total:pool.length,counted,pending:Math.max(0,pool.length-counted),ok,system,auditors,consolidated,active};
+}
+function inventorySyncStatus(){
+  const countPending=Object.keys(inventoryCounts()).length;
+  const debtPending=Object.keys(inventoryDebtEdits()).length;
+  const pending=countPending+debtPending;
+  if(catalogOffline)return {kind:"offline",text:pending?`Offline · ${pending} cambio${pending===1?"":"s"} local${pending===1?"":"es"}`:"Offline · usando copia local"};
+  if(pending===0)return {kind:"ok",text:"✓ Sincronizado con Compartir"};
+  return {kind:"pending",text:`${pending} cambio${pending===1?"":"s"} local${pending===1?"":"es"} pendiente${pending===1?"":"s"}`};
+}
+function inventoryStats(){
+  const pool=inventoryProducts(), active=inventoryActiveAuditors();
+  let reviewed=0,ok=0,system=0,auditors=0;
+  pool.forEach(p=>{
+    const audits=inventoryCurrentAudits(p), present=new Set(audits.map(x=>normalize(x.auditor)));
+    const complete=active.length>0 && active.every(a=>present.has(normalize(a)));
+    if(complete)reviewed++;
+    const st=inventoryStateFor(p,active); if(st==="ok")ok++; else if(st==="system")system++; else if(st==="auditors")auditors++;
+  });
+  const pending=Math.max(0,pool.length-reviewed);
+  const consolidated=pool.length>0 && reviewed===pool.length && system===0 && auditors===0 && ok===pool.length;
+  return {total:pool.length,reviewed,pending,ok,system,auditors,consolidated,active,progress:inventoryAuditorProgress(active)};
 }
 function updateInventorySessionInfo(){
   const s=inventoryCurrentSession(), text=`Sesión local: ${s.id} · ${s.status==="closed"?"cerrada":"abierta"}`;
@@ -1428,17 +1450,22 @@ function submitInventoryLogin(){
 function renderInventory(){
   if(!inventoryAuthenticated)return;
   if(!inventorySessionOpen()){showToast("La sesión está cerrada");inventoryAuthenticated=false;setMode("venta");return;}
-  const activePreview=inventoryActiveAuditors(); document.getElementById("inventoryAuditorLabel").textContent=`Auditor · ${inventoryAuditor()}${activePreview.length>1?` · ${activePreview.length} auditores detectados`:""}`; updateInventorySessionInfo();
-  const st=inventoryStats(); const pct=st.total?Math.round(st.counted/st.total*100):0;
+  const st=inventoryStats();
+  document.getElementById("inventoryAuditorLabel").textContent=`Auditor · ${inventoryAuditor()}${st.active.length>1?` · ${st.active.length} auditores detectados`:""}`; updateInventorySessionInfo();
+  const pct=st.total?Math.round(st.reviewed/st.total*100):0;
   document.getElementById("inventoryProgressFill").style.width=pct+"%";
   document.getElementById("inventoryProgressFill").classList.toggle("consolidated",st.consolidated);
-  document.getElementById("inventoryProgressText").textContent=`${st.counted} / ${st.total}`;
+  document.getElementById("inventoryProgressText").textContent=`${st.reviewed} / ${st.total}`;
   document.getElementById("inventoryProgressPct").textContent=pct+"%";
-  document.getElementById("invKpiCounted").textContent=st.counted;
+  document.getElementById("invKpiCounted").textContent=st.reviewed;
   document.getElementById("invKpiPending").textContent=st.pending;
   document.getElementById("invKpiOk").textContent=st.ok;
   document.getElementById("invKpiSystem").textContent=st.system;
   document.getElementById("invKpiAuditors").textContent=st.auditors;
+  const ap=document.getElementById("inventoryAuditorProgress");
+  if(ap)ap.textContent=st.progress.length?st.progress.map(x=>`${x.auditor} ${x.count}/${x.total}`).join(" · "):"Sin conteos de auditoría cargados";
+  const sync=inventorySyncStatus(), syncEl=document.getElementById("inventorySyncLabel");
+  if(syncEl){syncEl.className=`inventory-sync ${sync.kind}`;syncEl.textContent=sync.text;}
   const labels={all:"Todos",pending:`Pendientes (${st.pending})`,ok:`Correctos (${st.ok})`,system:`Vs sistema (${st.system})`,auditors:`Dif. auditores (${st.auditors})`};
   document.querySelectorAll("#inventoryFilterRow .inventory-filter").forEach(b=>{if(labels[b.dataset.filter])b.textContent=labels[b.dataset.filter];});
   document.getElementById("inventoryConsolidated").style.display=st.consolidated?"block":"none";
@@ -1464,14 +1491,15 @@ function renderInventoryResults(){
   // En Todos mantenemos la búsqueda limpia. Los botones de estado sí abren su lista completa.
   if(!q && inventoryFilter==="all"){list.style.display="none";list.innerHTML="";if(note)note.style.display="none";return;}
   let pool=inventoryProducts();
+  const active=inventoryActiveAuditors();
   if(q){ const words=q.split(/\s+/); pool=pool.filter(p=>words.every(w=>normalize(p.nombre).includes(w))); }
-  if(inventoryFilter!=="all")pool=pool.filter(p=>inventoryFilter==="pending" ? !inventoryHasOwnCount(p) : inventoryStateFor(p)===inventoryFilter);
+  if(inventoryFilter!=="all")pool=pool.filter(p=>inventoryStateFor(p,active)===inventoryFilter);
   const totalMatches=pool.length, limit=q?20:200; pool=pool.slice(0,limit); list.innerHTML="";
   if(!pool.length){list.style.display="none";if(note){note.style.display="block";note.textContent=inventoryFilter==="all"?"Sin resultados":"No hay productos en este estado";}return;}
   list.style.display="block";
   if(note){ note.style.display=totalMatches>limit?"block":"none"; note.textContent=totalMatches>limit?`Mostrando ${limit} de ${totalMatches}. Usa el buscador para localizar uno específico.`:""; }
   pool.forEach(p=>{
-    const state=inventoryStateFor(p), last=inventoryLastDate(p), age=inventoryAgeDays(last);
+    const state=inventoryStateFor(p,active), last=inventoryLastDate(p), age=inventoryAgeDays(last);
     const div=document.createElement("div"); div.className="result-item";
     const stale=age!==null&&age>365?` · último ${last} (>1 año)`:last?` · último ${last}`:"";
     div.innerHTML=`<div class="result-text"><span class="result-name"></span><div class="inventory-result-meta"></div></div><span class="inventory-state ${state}">${inventoryStateLabel(state)}</span>`;
@@ -1484,7 +1512,7 @@ function openInventoryCapture(p,focus=true){
   inventorySelectedProduct=p; const card=document.getElementById("inventoryCaptureCard"), local=inventoryCounts()[inventoryProductKey(p)], own=inventoryOwnAudit(p), audits=inventoryCurrentAudits(p), last=inventoryLastDate(p), debt=inventoryDebtFor(p);
   card.style.display="block";
   const other=audits.filter(x=>normalize(x.auditor)!==normalize(inventoryAuditor()));
-  const otherText=other.length?other.map(x=>`${escapeHtmlText(x.auditor)}: <b>${Number(x.count)}</b>`).join(" · "):"Sin otros auditores cargados en esta sesión";
+  const otherText=other.length?other.map(x=>`${escapeHtmlText(x.auditor)}: <b>${Number(x.count)}</b>`).join(" · "):"Sin otros auditores cargados desde Compartir";
   const debtBox=inventoryDebtFieldEnabled()?`<div class="inventory-debt-box"><div class="inventory-debt-row"><div class="field"><label for="invDebtInput">Deuda personal actual</label><input id="invDebtInput" type="number" inputmode="numeric" min="0" step="1" value="${debt}"></div><button class="btn-secondary" id="invDebtSave" type="button">Guardar</button></div><div class="inventory-note">Es un dato global del producto. 0 significa sin deuda.</div></div>`:"";
   card.innerHTML=`<div class="inventory-capture-head"><div><div class="selected-title" id="invCaptureName"></div><div class="inventory-current">Tu conteo actual: <strong>${own?Number(own.count):0}</strong></div></div><div class="inventory-system-qty">Sistema<strong>${inventorySystemQty(p)}</strong></div></div>
     <div class="inventory-entry"><button type="button" id="invMinus">−</button><input id="invQtyInput" type="number" inputmode="numeric" min="1" step="1" placeholder="Cantidad"><button type="button" id="invPlus">+</button></div>
