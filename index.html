@@ -158,8 +158,14 @@
   .inventory-consolidated{display:none;border:1px solid #28d7ff;background:rgba(40,215,255,.09);color:#8eeaff;border-radius:12px;padding:10px 12px;text-align:center;font-size:14px;font-weight:800;letter-spacing:.04em;margin-top:10px;}
   .inventory-sync{font-size:11.5px;font-weight:700;margin-top:5px;}
   .inventory-sync.ok{color:#53e6a7;}
-  .inventory-sync.pending{color:#f0b54a;}
+  .inventory-sync.pending{color:#f0b54a;cursor:pointer;text-decoration:underline;text-decoration-style:dotted;text-underline-offset:3px;}
   .inventory-sync.offline{color:var(--text-muted);}
+  .sync-detail-row{padding:10px 0;border-bottom:1px solid var(--border);}
+  .sync-detail-row:last-child{border-bottom:none;}
+  .sync-detail-name{font-size:13px;font-weight:700;}
+  .sync-detail-meta{font-size:11.5px;color:var(--text-muted);margin-top:3px;line-height:1.45;}
+  .sync-detail-actions{display:flex;justify-content:flex-end;margin-top:7px;}
+  .sync-detail-actions button{font-size:11.5px;padding:7px 9px;}
   .inventory-auditor-progress{font-size:11.5px;color:var(--text-muted);margin-top:7px;line-height:1.45;}
   .inventory-filter-row{display:flex;gap:6px;overflow-x:auto;padding:2px 0 10px;-webkit-overflow-scrolling:touch;}
   .inventory-filter{flex-shrink:0;background:var(--surface-2);border:1px solid var(--border);color:var(--text-muted);border-radius:18px;padding:7px 10px;font-size:11.5px;font-weight:700;}
@@ -360,6 +366,14 @@
     <input type="password" inputmode="numeric" id="pinInput" placeholder="••••" maxlength="8" style="text-align:center;font-size:20px;letter-spacing:4px;">
     <button class="btn-primary" id="pinSubmit">Entrar</button>
     <p class="pin-error" id="pinError"></p>
+  </div>
+</div>
+
+<div class="overlay" id="inventorySyncOverlay" style="display:none;">
+  <div class="overlay-card" style="max-width:420px;max-height:82vh;overflow:auto;">
+    <div class="overlay-header"><strong>Sincronización de inventario</strong><button class="close-x" id="inventorySyncClose" type="button">✕</button></div>
+    <div class="inventory-sub" id="inventorySyncSummary" style="margin-bottom:8px;"></div>
+    <div id="inventorySyncDetails"></div>
   </div>
 </div>
 
@@ -1059,8 +1073,12 @@ function processCatalogRows(rows,meta={}){
   document.getElementById("mainApp").style.display="block";
   document.getElementById("footerBar").style.display=(appMode==="venta")?"block":"none";
   applyCatalogView();
-  reconcileInventoryLocalWithSheet();
+  const syncResolved=reconcileInventoryLocalWithSheet();
   updateDebtList(); updateCatalogCacheInfo();
+  if(!catalogOffline && (syncResolved.counts||syncResolved.debts||syncResolved.orphans)) {
+    const total=(syncResolved.counts||0)+(syncResolved.debts||0)+(syncResolved.orphans||0);
+    if(total>0) console.info("Inventario: datos locales reconciliados",syncResolved);
+  }
   if(appMode==="inventario")renderInventory();
 }
 async function loadInventory(options={}){
@@ -1251,25 +1269,95 @@ function inventorySheetAuditForAuditor(p,auditor=inventoryAuditor()){
   return inventorySheetAudits(p).find(x=>normalize(x.auditor)===key)||null;
 }
 function reconcileInventoryLocalWithSheet(){
-  // Verificación ligera: si ERP/Compartir ya refleja exactamente el dato local,
-  // se elimina sólo la copia local pendiente y el ERP pasa a ser la referencia.
-  const auditor=inventoryAuditor(); if(!auditor||!products.length)return {counts:0,debts:0};
-  const counts=inventoryCounts(), debts=inventoryDebtEdits(); let c=0,d=0,changedCounts=false,changedDebts=false;
-  products.forEach(p=>{
-    const key=inventoryProductKey(p), local=counts[key];
-    if(local){
-      const sheet=inventorySheetAuditForAuditor(p,auditor);
-      if(sheet && Number(sheet.count)===Number(local.conteo)){ delete counts[key]; c++; changedCounts=true; }
+  // Compartir online es la referencia. Se elimina sólo lo que ya fue confirmado
+  // o residuos de productos que ya no existen en el catálogo publicado.
+  const auditor=inventoryAuditor(); if(!auditor||!products.length)return {counts:0,debts:0,orphans:0};
+  const counts=inventoryCounts(), debts=inventoryDebtEdits();
+  const productMap=new Map(products.map(p=>[inventoryProductKey(p),p]));
+  let c=0,d=0,o=0,changedCounts=false,changedDebts=false;
+
+  Object.keys(counts).forEach(key=>{
+    const local=counts[key], p=productMap.get(key);
+    if(!p){
+      // Sólo limpiamos huérfanos con una carga online real; offline conservamos todo.
+      if(!catalogOffline){ delete counts[key]; o++; changedCounts=true; }
+      return;
     }
-    const debt=debts[key];
-    if(debt && Object.prototype.hasOwnProperty.call(debt,"deuda")){
-      if(Number(inventorySheetDebt(p))===Number(debt.deuda)){ delete debts[key]; d++; changedDebts=true; }
+    const sheet=inventorySheetAuditForAuditor(p,auditor);
+    if(sheet && Number(sheet.count)===Number(local.conteo)){
+      delete counts[key]; c++; changedCounts=true;
     }
   });
+
+  Object.keys(debts).forEach(key=>{
+    const debt=debts[key], p=productMap.get(key);
+    if(!p){
+      if(!catalogOffline){ delete debts[key]; o++; changedDebts=true; }
+      return;
+    }
+    if(debt && Object.prototype.hasOwnProperty.call(debt,"deuda") && Number(inventorySheetDebt(p))===Number(debt.deuda)){
+      delete debts[key]; d++; changedDebts=true;
+    }
+  });
+
   if(changedCounts)saveInventoryCounts(counts);
   if(changedDebts)saveInventoryDebtEdits(debts);
-  return {counts:c,debts:d};
+  return {counts:c,debts:d,orphans:o};
 }
+
+function inventoryPendingSyncDetails(){
+  const auditor=inventoryAuditor(), counts=inventoryCounts(), debts=inventoryDebtEdits();
+  const productMap=new Map(products.map(p=>[inventoryProductKey(p),p]));
+  const rows=[];
+  Object.keys(counts).forEach(key=>{
+    const local=counts[key], p=productMap.get(key);
+    if(!p){ rows.push({kind:"count",key,nombre:local?.nombre||key,local:Number(local?.conteo)||0,sheet:null,status:"fuera"}); return; }
+    const sh=inventorySheetAuditForAuditor(p,auditor);
+    rows.push({kind:"count",key,nombre:p.nombre,local:Number(local?.conteo)||0,sheet:sh?Number(sh.count):null,status:sh?"diferente":"pendiente"});
+  });
+  Object.keys(debts).forEach(key=>{
+    const local=debts[key], p=productMap.get(key);
+    if(!p){ rows.push({kind:"debt",key,nombre:local?.nombre||key,local:Number(local?.deuda)||0,sheet:null,status:"fuera"}); return; }
+    rows.push({kind:"debt",key,nombre:p.nombre,local:Number(local?.deuda)||0,sheet:Number(inventorySheetDebt(p))||0,status:"diferente"});
+  });
+  return rows;
+}
+function discardInventoryLocalPending(kind,key){
+  if(kind==="debt"){
+    const all=inventoryDebtEdits(); delete all[key]; saveInventoryDebtEdits(all);
+  }else{
+    const all=inventoryCounts(); delete all[key]; saveInventoryCounts(all);
+  }
+  renderInventory(); openInventorySyncDetails();
+}
+function openInventorySyncDetails(){
+  const overlay=document.getElementById("inventorySyncOverlay"), box=document.getElementById("inventorySyncDetails"), summary=document.getElementById("inventorySyncSummary");
+  if(!overlay||!box||!summary)return;
+  const rows=inventoryPendingSyncDetails();
+  if(!rows.length){ overlay.style.display="none"; showToast("Sincronizado con Compartir"); return; }
+  const counts=rows.filter(x=>x.kind==="count").length, debts=rows.filter(x=>x.kind==="debt").length;
+  summary.textContent=`${rows.length} dato${rows.length===1?"":"s"} local${rows.length===1?"":"es"} sin confirmar${counts?` · ${counts} conteo${counts===1?"":"s"}`:""}${debts?` · ${debts} deuda${debts===1?"":"s"}`:""}`;
+  box.innerHTML="";
+  rows.forEach(r=>{
+    const div=document.createElement("div"); div.className="sync-detail-row";
+    const type=r.kind==="debt"?"Deuda":"Conteo";
+    let meta="";
+    if(r.status==="fuera") meta=`${type}: local ${r.local} · el producto ya no está en Compartir`;
+    else if(r.sheet===null) meta=`${type}: local ${r.local} · todavía no aparece para ${inventoryAuditor()} en Compartir`;
+    else meta=`${type}: local ${r.local} · Compartir ${r.sheet}`;
+    div.innerHTML=`<div class="sync-detail-name"></div><div class="sync-detail-meta"></div><div class="sync-detail-actions"></div>`;
+    div.querySelector(".sync-detail-name").textContent=r.nombre;
+    div.querySelector(".sync-detail-meta").textContent=meta;
+    const actions=div.querySelector(".sync-detail-actions");
+    if(r.sheet!==null){
+      const b=document.createElement("button"); b.className="btn-secondary"; b.type="button"; b.textContent="Usar Compartir";
+      b.addEventListener("click",()=>discardInventoryLocalPending(r.kind,r.key)); actions.appendChild(b);
+    }
+    box.appendChild(div);
+  });
+  overlay.style.display="flex";
+}
+
 function maybeOfferInventorySessionMerge(force=false){
   if(!inventoryAuditSchema)return false;
   const current=inventorySessionId(), merged=inventoryMergedSessionIds(), rejects=inventorySessionRejects();
@@ -1337,13 +1425,12 @@ function inventoryAuditorProgress(active=null){
   });
 }
 function inventorySyncStatus(){
-  const countPending=Object.keys(inventoryCounts()).length;
-  const debtPending=Object.keys(inventoryDebtEdits()).length;
-  const pending=countPending+debtPending;
+  const rows=inventoryPendingSyncDetails(), pending=rows.length;
   if(catalogOffline)return {kind:"offline",text:pending?`Offline · ${pending} cambio${pending===1?"":"s"} local${pending===1?"":"es"}`:"Offline · usando copia local"};
   if(pending===0)return {kind:"ok",text:"✓ Sincronizado con Compartir"};
-  return {kind:"pending",text:`⚠ ${pending} dato${pending===1?"":"s"} local${pending===1?"":"es"} sin confirmar en Compartir`};
+  return {kind:"pending",text:`⚠ ${pending} dato${pending===1?"":"s"} local${pending===1?"":"es"} sin confirmar · tocar para revisar`};
 }
+
 function inventoryStats(){
   const pool=inventoryProducts(), active=inventoryActiveAuditors();
   let reviewed=0,ok=0,system=0,auditors=0;
@@ -1422,6 +1509,8 @@ function setupInventoryMode(){
   document.getElementById("btnInventoryCsv")?.addEventListener("click",exportInventoryCsv);
   document.getElementById("btnInventoryCopy")?.addEventListener("click",copyInventoryTsv);
   document.getElementById("btnInventoryRefresh")?.addEventListener("click",()=>{showToast("Actualizando Compartir…");loadInventory({manual:true});});
+  document.getElementById("inventorySyncLabel")?.addEventListener("click",()=>{if(inventoryPendingSyncDetails().length)openInventorySyncDetails();});
+  document.getElementById("inventorySyncClose")?.addEventListener("click",()=>{document.getElementById("inventorySyncOverlay").style.display="none";});
 }
 function openInventoryLogin(forceSetup){
   const auditor=inventoryAuditor(); const setup=forceSetup||!auditor;
