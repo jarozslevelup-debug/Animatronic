@@ -1312,7 +1312,15 @@ function locationSheetState(p){
 }
 function locationState(p){
   const rec=locationOverrides()[inventoryProductKey(p)];
-  return rec?.code!==undefined?parseLocationState(rec.code):locationSheetState(p);
+  if(rec?.code!==undefined){
+    const st=parseLocationState(rec.code), total=Object.values(st.locs||{}).reduce((a,n)=>a+Number(n||0),0), system=inventorySystemQty(p);
+    // Transferencias/asignaciones no cambian la existencia total. Si el ERP creció,
+    // la diferencia es mercancía nueva Sin ubicar aunque exista un cambio local pendiente.
+    // Las ventas provisionales sí reducen temporalmente el total local, por eso no se rellenan con SU.
+    if(rec.reason!=="sale" && rec.reason!=="sale-undo" && system>total) st.locs.SU=(st.locs.SU||0)+(system-total);
+    return st;
+  }
+  return locationSheetState(p);
 }
 function locationSumState(st){return Object.values(st?.locs||{}).reduce((a,n)=>a+Number(n||0),0);}
 function locationZoneQty(p,zone){const st=locationState(p);return Object.entries(st.locs).filter(([c])=>locationZone(c)===zone).reduce((a,[,n])=>a+Number(n||0),0);}
@@ -1326,7 +1334,17 @@ function allLocationCodesFromProducts(){
 }
 function reconcileLocationOverridesWithSheet(){
   const all=locationOverrides();let changed=false;
-  products.forEach(p=>{const key=inventoryProductKey(p),rec=all[key];if(!rec)return;const sheet=encodeLocationState(locationSheetState(p)),local=encodeLocationState(parseLocationState(rec.code));if(sheet===local){delete all[key];changed=true;}});
+  products.forEach(p=>{
+    const key=inventoryProductKey(p),rec=all[key];if(!rec)return;
+    // Comparamos primero contra el código REAL publicado por Sheets, sin añadir SU automáticamente.
+    // Así A3:2 local puede sincronizar con A3:2 de Compartir aunque el ERP ya haya subido a 3.
+    const sheetRaw=encodeLocationState(parseLocationState(locationSheetRaw(p)));
+    const localRaw=encodeLocationState(parseLocationState(rec.code));
+    const effectiveLocal=encodeLocationState(locationState(p));
+    const localTotal=locationSumState(parseLocationState(rec.code)), system=inventorySystemQty(p);
+    const saleCanClose=(rec.reason!=="sale"&&rec.reason!=="sale-undo") || localTotal===system;
+    if(saleCanClose && (sheetRaw===localRaw || sheetRaw===effectiveLocal)){delete all[key];changed=true;}
+  });
   if(changed)saveLocationOverrides(all);
 }
 function showModelInLists(){return storageGet("rv_show_model_lists",false)===true;}
