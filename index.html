@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
-<title>Registro de ventas · v0.6.5</title>
+<title>Registro de ventas · v0.6.6</title>
 <style>
   :root{
     --bg:#16120f; --bg-elev:#1e1712; --surface:#2a2119; --surface-2:#342a1f;
@@ -241,13 +241,19 @@
   .location-alias-row{display:grid;grid-template-columns:64px 1fr;gap:8px;align-items:center;margin-top:6px;}
   .location-alias-code{font-size:12px;color:var(--text-muted);font-weight:700;}
   .location-alias-row input{padding:8px 9px;font-size:13px;}
-  .stand-policy-row{display:grid;grid-template-columns:auto 1fr 70px;gap:9px;align-items:center;padding:10px 2px;border-bottom:1px solid var(--border);}
+  .stand-policy-row{display:grid;grid-template-columns:auto 1fr 58px auto;gap:8px;align-items:center;padding:10px 2px;border-bottom:1px solid var(--border);}
   .stand-policy-row:last-child{border-bottom:none;}
   .stand-policy-main{min-width:0;}
   .stand-policy-name{font-size:13px;}
   .stand-policy-meta{font-size:11px;color:var(--text-muted);margin-top:2px;}
   .stand-policy-row input[type="number"]{padding:8px 6px;text-align:center;font-weight:800;}
   .stand-policy-row input[type="checkbox"]{width:18px;height:18px;}
+  .charge-policy-toggle{display:flex;align-items:center;justify-content:center;gap:3px;min-width:34px;font-size:15px;color:var(--text-muted);cursor:pointer;}
+  .charge-policy-toggle.active{color:var(--accent);}
+  .charge-list-row{padding:10px 2px;border-bottom:1px solid var(--border);}
+  .charge-list-row:last-child{border-bottom:none;}
+  .charge-list-name{font-size:13px;font-weight:700;}
+  .charge-list-meta{font-size:11.5px;color:var(--text-muted);margin-top:3px;}
   .location-empty{font-size:12px;color:var(--text-muted);padding:14px 4px;text-align:center;}
   .location-sticky-action{position:sticky;bottom:8px;z-index:4;}
   @media (max-width:390px){.inventory-kpis{grid-template-columns:repeat(3,1fr);}.inventory-kpi:nth-child(4),.inventory-kpi:nth-child(5){grid-column:auto;}}
@@ -352,6 +358,7 @@
           <button class="location-tab active" data-loc-filter="assign" type="button">Asignar</button>
           <button class="location-tab" data-loc-filter="transfer" type="button">Transferir</button>
           <button class="location-tab" data-loc-filter="standpolicy" type="button">Puesto</button>
+          <button class="location-tab" data-loc-filter="charge" type="button">🔋 Cargar</button>
           <button class="location-tab" data-loc-filter="replenish" type="button">Reponer puesto</button>
           <button class="location-tab" data-loc-filter="mismatch" type="button">Descuadres</button>
         </div>
@@ -605,7 +612,7 @@
 </div>
 
 <script>
-/* ERP HTML v0.6.5 · cierre seguro de ventas + ubicaciones compactas + alias + política de puesto */
+/* ERP HTML v0.6.6 · cierre seguro + ubicaciones + política de puesto + mantenimiento de carga */
 /* ============================================================
    CONFIGURACIÓN
    ============================================================ */
@@ -1331,10 +1338,14 @@ function locationLabel(code,style=locationDisplayStyle()){
   return z==="warehouse"?`📦${c}`:z==="stand"?`⛺${c}`:c;
 }
 function parseLocationState(raw){
-  const text=String(raw??"").trim(); let target=1, locText=text;
+  const text=String(raw??"").trim(); let target=1, charge=false, locText=text;
   if(text.includes("|")){
     const parts=text.split("|"); locText=parts.shift()||"";
-    parts.forEach(meta=>{const m=String(meta).trim().match(/^P\s*=\s*(\d+)$/i);if(m)target=Math.max(0,Number(m[1])||0);});
+    parts.forEach(meta=>{
+      const x=String(meta).trim(),m=x.match(/^P\s*=\s*(\d+)$/i);
+      if(m)target=Math.max(0,Number(m[1])||0);
+      else if(/^C$/i.test(x))charge=true;
+    });
   }
   const locs={};
   locText.split("/").map(x=>x.trim()).filter(Boolean).forEach(tok=>{
@@ -1342,16 +1353,16 @@ function parseLocationState(raw){
     if(!m)m=tok.match(/^([A-Za-z][A-Za-z0-9_-]*?)-(\d+)$/);
     if(!m)return; const code=normalizeLocationCode(m[1]), qty=Math.max(0,Number(m[2])||0); if(code&&qty>0)locs[code]=(locs[code]||0)+qty;
   });
-  return {locs,target};
+  return {locs,target,charge};
 }
 function locationCodeSort(a,b){
   const rank=c=>{const z=locationZone(c);return z==="warehouse"?1:z==="stand"?2:z==="unlocated"?3:4;};
   const ra=rank(a),rb=rank(b);if(ra!==rb)return ra-rb;return String(a).localeCompare(String(b),"es",{numeric:true});
 }
 function encodeLocationState(state){
-  const locs=state?.locs||{}, target=Number.isFinite(Number(state?.target))?Math.max(0,Number(state.target)):1;
+  const locs=state?.locs||{}, target=Number.isFinite(Number(state?.target))?Math.max(0,Number(state.target)):1, charge=state?.charge===true;
   const body=Object.keys(locs).filter(k=>Number(locs[k])>0).sort(locationCodeSort).map(k=>`${normalizeLocationCode(k)}:${Number(locs[k])}`).join("/");
-  return body+(target!==1?`|P=${target}`:"");
+  return body+(target!==1?`|P=${target}`:"")+(charge?"|C":"");
 }
 function locationColumnIndex(){ return sourceHeaderNorm.findIndex(h=>h==="ubicaciones"||h==="ubicacion"); }
 function locationFeatureConfigured(){ return locationColumnIndex()>=0 || Object.keys(locationOverrides()).length>0; }
@@ -1361,7 +1372,7 @@ function locationSheetRaw(p){
   return String(p._raw[sourceHeaderNorm[idx]]??"").trim();
 }
 function locationSheetState(p){
-  if(locationColumnIndex()<0)return {locs:{},target:1};
+  if(locationColumnIndex()<0)return {locs:{},target:1,charge:false};
   const st=parseLocationState(locationSheetRaw(p)), total=Object.values(st.locs).reduce((a,n)=>a+Number(n||0),0), system=inventorySystemQty(p);
   if(system>total)st.locs.SU=(st.locs.SU||0)+(system-total);
   return st;
@@ -1446,10 +1457,10 @@ function productListMetaHtml(p,mode="venta"){
 }
 function locationShortageForProduct(p){const key=inventoryProductKey(p);return Object.values(locationShortages()).filter(x=>x?.productKey===key).reduce((a,x)=>a+Number(x.qty||0),0);}
 function locationStats(){
-  if(!locationFeatureConfigured())return {unlocated:0,mismatch:0,replenish:0,restock:0,pending:0,configured:false};
-  let unlocated=0,mismatch=0,replenish=0,restock=0,pending=Object.keys(locationOverrides()).length;
-  inventoryProducts().forEach(p=>{const st=locationState(p),sum=locationSumState(st),sys=inventorySystemQty(p),su=Number(st.locs.SU||0),target=Math.max(0,Number(st.target)||0),stand=locationZoneQty(p,"stand"),wh=locationZoneQty(p,"warehouse"),saleShort=locationShortageForProduct(p);if(su>0)unlocated++;if(sum!==sys||saleShort>0)mismatch++;if(su<=0&&target>stand){if(wh>0)replenish++;else restock++;}});
-  return {unlocated,mismatch,replenish,restock,pending,configured:true};
+  if(!locationFeatureConfigured())return {unlocated:0,mismatch:0,replenish:0,restock:0,charge:0,pending:0,configured:false};
+  let unlocated=0,mismatch=0,replenish=0,restock=0,charge=0,pending=Object.keys(locationOverrides()).length;
+  inventoryProducts().forEach(p=>{const st=locationState(p),sum=locationSumState(st),sys=inventorySystemQty(p),su=Number(st.locs.SU||0),target=Math.max(0,Number(st.target)||0),stand=locationZoneQty(p,"stand"),wh=locationZoneQty(p,"warehouse"),saleShort=locationShortageForProduct(p);if(st.charge===true)charge++;if(su>0)unlocated++;if(sum!==sys||saleShort>0)mismatch++;if(su<=0&&target>stand){if(wh>0)replenish++;else restock++;}});
+  return {unlocated,mismatch,replenish,restock,charge,pending,configured:true};
 }
 function renderLocationAliasEditors(){
   const render=(id,codes)=>{
@@ -1461,7 +1472,7 @@ function renderLocationAliasEditors(){
 }
 function updateLocationUI(){
   const st=locationStats(), sum=document.getElementById("locationOptionsSummary");
-  if(sum)sum.textContent=st.configured?`Sin ubicar ${st.unlocated} · Reponer puesto ${st.replenish} · Por surtir ${st.restock} · Descuadres ${st.mismatch}${st.pending?` · ${st.pending} cambio${st.pending===1?"":"s"} local${st.pending===1?"":"es"}`:""}`:"Falta la columna Ubicaciones en Compartir · el catálogo funciona normal.";
+  if(sum)sum.textContent=st.configured?`Sin ubicar ${st.unlocated} · Cargar ${st.charge} · Reponer puesto ${st.replenish} · Por surtir ${st.restock} · Descuadres ${st.mismatch}${st.pending?` · ${st.pending} cambio${st.pending===1?"":"s"} local${st.pending===1?"":"es"}`:""}`:"Falta la columna Ubicaciones en Compartir · el catálogo funciona normal.";
   const wh=document.getElementById("warehouseBoxesSummary"),pt=document.getElementById("standBoxesSummary");
   if(wh){const a=locationRegistry().filter(c=>/^AL\d+$/.test(c)).sort(locationCodeSort);wh.textContent=a.length?a.map(c=>locationAlias(c)?`${c} ${locationAlias(c)}`:c).join(" · "):"Sin cajas de almacén creadas todavía.";}
   if(pt){const a=locationRegistry().filter(c=>/^PT\d+$/.test(c)).sort(locationCodeSort);pt.textContent=a.map(c=>locationAlias(c)?`${c} ${locationAlias(c)}`:(c==="PT04"?"PT04 Hielera":c)).join(" · ")||"PT01 · PT02 · PT03 · PT04 Hielera";}
@@ -1513,11 +1524,14 @@ function createDynamicBox(zone){
 }
 function locationDestinationOptions(zone="stand"){ return locationRegistry().filter(c=>locationZone(c)===zone).sort(locationCodeSort); }
 function locationProductStatus(p){
-  const st=locationState(p),sum=locationSumState(st),sys=inventorySystemQty(p),su=Number(st.locs.SU||0),target=Math.max(0,Number(st.target)||0),stand=locationZoneQty(p,"stand"),wh=locationZoneQty(p,"warehouse"),need=Math.max(0,target-stand),saleShort=locationShortageForProduct(p);
-  return {st,sum,sys,su,target,stand,wh,need,saleShort,mismatch:sum!==sys||saleShort>0,unlocated:su>0,replenish:su<=0&&need>0&&wh>0,restock:su<=0&&need>0&&wh<=0};
+  const st=locationState(p),sum=locationSumState(st),sys=inventorySystemQty(p),su=Number(st.locs.SU||0),target=Math.max(0,Number(st.target)||0),charge=st.charge===true,stand=locationZoneQty(p,"stand"),wh=locationZoneQty(p,"warehouse"),need=Math.max(0,target-stand),saleShort=locationShortageForProduct(p);
+  return {st,sum,sys,su,target,charge,stand,wh,need,saleShort,mismatch:sum!==sys||saleShort>0,unlocated:su>0,replenish:su<=0&&need>0&&wh>0,restock:su<=0&&need>0&&wh<=0};
 }
 function saveProductStandTarget(p,target){
   const st=locationState(p);st.target=Math.max(0,Math.floor(Number(target)||0));saveProductLocationState(p,st,"stand-policy");
+}
+function saveProductChargePolicy(p,enabled){
+  const st=locationState(p);st.charge=enabled===true;saveProductLocationState(p,st,"charge-policy");
 }
 function setLocationModeControls(html){const el=document.getElementById("locationModeControls");if(el)el.innerHTML=html;}
 function locationSelectOptions(codes,current=""){return codes.map(c=>`<option value="${c}" ${c===current?"selected":""}>${escapeHtmlText(locationManagerLabel(c))}</option>`).join("");}
@@ -1533,7 +1547,7 @@ function ensureLocationTransferPair(){
 function renderLocationManager(){
   if(appMode!=="ubicaciones")return;
   const list=document.getElementById("locationManagerList"),summary=document.getElementById("locationManagerSummary"),btn=document.getElementById("btnTransferSelectedReplenish"),searchBox=document.getElementById("locationSearchBox");if(!list||!summary)return;
-  const ss=locationStats();summary.textContent=ss.configured?`Sin ubicar ${ss.unlocated} · Reponer ${ss.replenish} · Por surtir ${ss.restock} · Descuadres ${ss.mismatch}`:"Agrega la columna Ubicaciones a Compartir para activar el mini almacén.";
+  const ss=locationStats();summary.textContent=ss.configured?`Sin ubicar ${ss.unlocated} · Cargar ${ss.charge} · Reponer ${ss.replenish} · Por surtir ${ss.restock} · Descuadres ${ss.mismatch}`:"Agrega la columna Ubicaciones a Compartir para activar el mini almacén.";
   list.innerHTML="";document.getElementById("locationEditor").style.display="none";btn.style.display="none";
   if(!ss.configured){setLocationModeControls('<div class="location-empty">El catálogo sigue funcionando. Cuando Compartir tenga la columna Ubicaciones, aquí podrás empezar a organizar.</div>');return;}
   const q=normalize(document.getElementById("locationSearchInput")?.value||""),words=q.split(/\s+/).filter(Boolean);
@@ -1562,20 +1576,35 @@ function renderLocationManager(){
     return;
   }
   if(locationManagerFilter==="standpolicy"){
-    setLocationModeControls('<div class="inventory-sub">Todos los productos van al puesto con mínimo 1 por defecto. Busca un producto para incluirlo, excluirlo o cambiar cuántas piezas quieres mantener.</div>');
+    setLocationModeControls('<div class="inventory-sub">Busca un producto para incluirlo o excluirlo del puesto, cambiar su mínimo y marcar si requiere mantenimiento de carga.</div>');
     if(searchBox)searchBox.style.display="block";
-    const all=inventoryProducts(),excluded=all.filter(p=>locationStandTarget(p)===0).length;
-    if(!q){list.innerHTML=`<div class="location-empty">${all.length-excluded} incluidos · ${excluded} excluidos · busca producto o modelo para configurar.</div>`;return;}
+    const all=inventoryProducts(),excluded=all.filter(p=>locationStandTarget(p)===0).length,chargeCount=all.filter(p=>locationState(p).charge===true).length;
+    if(!q){list.innerHTML=`<div class="location-empty">${all.length-excluded} incluidos · ${excluded} excluidos · 🔋 ${chargeCount} requieren carga · busca producto o modelo para configurar.</div>`;return;}
     let arr=all.filter(match).slice(0,40);
     if(!arr.length){list.innerHTML='<div class="location-empty">No encontré productos con esa búsqueda.</div>';return;}
     arr.forEach(p=>{
       const x=locationProductStatus(p),row=document.createElement("div");row.className="stand-policy-row";
-      row.innerHTML=`<input type="checkbox" class="stand-policy-check" ${x.target>0?"checked":""}><div class="stand-policy-main"><div class="stand-policy-name"></div><div class="stand-policy-meta"></div></div><input type="number" class="stand-policy-target" inputmode="numeric" min="0" max="99" step="1" value="${x.target}" ${x.target===0?"disabled":""}>`;
+      row.innerHTML=`<input type="checkbox" class="stand-policy-check" title="Incluir en puesto" ${x.target>0?"checked":""}><div class="stand-policy-main"><div class="stand-policy-name"></div><div class="stand-policy-meta"></div></div><input type="number" class="stand-policy-target" inputmode="numeric" min="0" max="99" step="1" value="${x.target}" ${x.target===0?"disabled":""}><label class="charge-policy-toggle ${x.charge?"active":""}" title="Requiere mantenimiento de carga"><input type="checkbox" class="charge-policy-check" ${x.charge?"checked":""}><span>🔋</span></label>`;
       row.querySelector(".stand-policy-name").textContent=p.nombre;
-      row.querySelector(".stand-policy-meta").textContent=`${p.modelo?p.modelo+" · ":""}${x.target>0?`Puesto mínimo ${x.target}`:"Excluido del puesto"}`;
-      const ch=row.querySelector(".stand-policy-check"),inp=row.querySelector(".stand-policy-target");
+      row.querySelector(".stand-policy-meta").textContent=`${p.modelo?p.modelo+" · ":""}${x.target>0?`Puesto mínimo ${x.target}`:"Excluido del puesto"}${x.charge?" · Requiere carga":""}`;
+      const ch=row.querySelector(".stand-policy-check"),inp=row.querySelector(".stand-policy-target"),charge=row.querySelector(".charge-policy-check");
       ch.addEventListener("change",()=>{const n=ch.checked?Math.max(1,Number(inp.value)||1):0;inp.disabled=!ch.checked;inp.value=n;saveProductStandTarget(p,n);renderLocationManager();});
       inp.addEventListener("change",()=>{const n=Math.max(0,Math.floor(Number(inp.value)||0));saveProductStandTarget(p,n);ch.checked=n>0;inp.disabled=n===0;renderLocationManager();});
+      charge.addEventListener("change",()=>{saveProductChargePolicy(p,charge.checked);renderLocationManager();});
+      list.appendChild(row);
+    });
+    return;
+  }
+  if(locationManagerFilter==="charge"){
+    setLocationModeControls('<div class="inventory-sub">Sólo aparecen productos marcados con 🔋 Requiere carga. Se configuran desde la pestaña Puesto.</div>');
+    if(searchBox)searchBox.style.display="block";
+    let arr=inventoryProducts().filter(p=>locationState(p).charge===true&&match(p)).sort((a,b)=>a.nombre.localeCompare(b.nombre,"es"));
+    if(!arr.length){list.innerHTML=`<div class="location-empty">${q?"No encontré productos que requieran carga con esa búsqueda.":"No hay productos marcados para carga todavía."}</div>`;return;}
+    arr.slice(0,120).forEach(p=>{
+      const row=document.createElement("div"),st=locationState(p),total=inventorySystemQty(p),where=Object.entries(st.locs).filter(([,n])=>Number(n)>0).sort(([a],[b])=>locationCodeSort(a,b)).map(([c,n])=>`${locationManagerLabel(c)} ×${Number(n)}`).join(" · ");
+      row.className="charge-list-row";row.innerHTML='<div class="charge-list-name"></div><div class="charge-list-meta"></div>';
+      row.querySelector(".charge-list-name").textContent=`🔋 ${p.nombre}`;
+      row.querySelector(".charge-list-meta").textContent=`${p.modelo?p.modelo+" · ":""}Total ${total}${where?` · ${where}`:""}`;
       list.appendChild(row);
     });
     return;
