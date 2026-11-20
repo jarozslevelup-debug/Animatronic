@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
-<title>Registro de ventas · v0.6.4</title>
+<title>Registro de ventas · v0.6.5</title>
 <style>
   :root{
     --bg:#16120f; --bg-elev:#1e1712; --surface:#2a2119; --surface-2:#342a1f;
@@ -605,7 +605,7 @@
 </div>
 
 <script>
-/* ERP HTML v0.6.4 · ubicaciones compactas configurables + alias + política de puesto */
+/* ERP HTML v0.6.5 · cierre seguro de ventas + ubicaciones compactas + alias + política de puesto */
 /* ============================================================
    CONFIGURACIÓN
    ============================================================ */
@@ -1623,6 +1623,25 @@ function locationSaleLedger(){return storageGet(LOCATION_SALE_LEDGER_KEY,{})||{}
 function saveLocationSaleLedger(v){storageSet(LOCATION_SALE_LEDGER_KEY,v);}
 function locationShortages(){return storageGet(LOCATION_SHORTAGES_KEY,{})||{};}
 function saveLocationShortages(v){storageSet(LOCATION_SHORTAGES_KEY,v);}
+function saleLocationTempStats(){
+  const led=locationSaleLedger(), sh=locationShortages();
+  return {
+    ledger:Object.keys(led).length,
+    pendingRecords:Object.keys(sh).length,
+    pendingQty:Object.values(sh).reduce((a,x)=>a+Math.max(0,Number(x?.qty)||0),0)
+  };
+}
+function clearClosedSaleLocationMeta(){
+  const st=saleLocationTempStats();
+  // Cerrar/vaciar ventas NO restaura mercancía: sólo elimina metadatos temporales
+  // usados para deshacer una venta visible o avisar que no encontró piezas en la zona esperada.
+  // Los overrides de ubicación se conservan para que el descuento físico siga vigente hasta que Sheets lo absorba.
+  saveLocationSaleLedger({});
+  saveLocationShortages({});
+  updateLocationUI();
+  refreshVisibleProductLists();
+  return st;
+}
 function deductSaleFromLocations(sale){
   const zone=(normalize(sale?.canal)==="tianguis"||normalize(sale?.canal)==="tianguisnav")?"stand":normalize(sale?.canal)==="facebook"?"warehouse":"";if(!zone||sale?.manual)return;const p=products.find(x=>normalize(x.nombre)===normalize(sale.nombre));if(!p)return;let left=Math.max(0,Math.floor(Number(sale.cantidad)||0));if(!left)return;const st=locationState(p),removed=[];const sources=Object.keys(st.locs).filter(c=>locationZone(c)===zone&&Number(st.locs[c])>0).sort((a,b)=>Number(st.locs[a])-Number(st.locs[b])||locationCodeSort(a,b));for(const c of sources){if(left<=0)break;const take=Math.min(left,Number(st.locs[c])||0);st.locs[c]-=take;if(st.locs[c]<=0)delete st.locs[c];removed.push([c,take]);left-=take;}if(removed.length){saveProductLocationState(p,st,"sale");const led=locationSaleLedger();led[sale.id]={productKey:inventoryProductKey(p),removed};saveLocationSaleLedger(led);}if(left>0){const sh=locationShortages();sh[sale.id]={productKey:inventoryProductKey(p),nombre:p.nombre,qty:left,zone};saveLocationShortages(sh);}updateLocationUI();
 }
@@ -2737,10 +2756,33 @@ document.getElementById("btnWhatsapp").addEventListener("click", ()=>{
   window.open("https://wa.me/" + CONFIG.whatsappNumber + "?text=" + encodeURIComponent(texto), "_blank");
 });
 document.getElementById("btnClearDay").addEventListener("click", ()=>{
-  if(todaySales.length === 0) return;
-  const typed=prompt("Esta acción elimina TODA la lista de ventas de hoy.\n\nEscribe VACIAR VENTAS para confirmar:","");
-  if(normalize(typed||"")!=="vaciar ventas"){ showToast("Cancelado"); return; }
-  todaySales = []; persistToday(); renderToday(); showToast("Ventas de hoy vaciadas");
+  const temp=saleLocationTempStats();
+  const hasTemp=(temp.ledger>0||temp.pendingRecords>0);
+  if(todaySales.length===0&&!hasTemp){showToast("No hay ventas ni pendientes que vaciar");return;}
+
+  const lines=[];
+  if(todaySales.length){
+    lines.push(`Se cerrarán ${todaySales.length} venta${todaySales.length===1?"":"s"} de la lista.`);
+    lines.push("Las ubicaciones actuales SE CONSERVAN; no se devuelve mercancía.");
+  }else{
+    lines.push("No hay ventas visibles, pero quedaron registros temporales de ventas anteriores.");
+    lines.push("Las ubicaciones actuales SE CONSERVAN.");
+  }
+  if(temp.pendingQty>0)lines.push(`Se limpiará venta pendiente: ${temp.pendingQty} pieza${temp.pendingQty===1?"":"s"}.`);
+  if(temp.ledger>0)lines.push(`Se cerrarán ${temp.ledger} registro${temp.ledger===1?"":"s"} de deshacer venta.`);
+  lines.push("", "Escribe VACIAR VENTAS para confirmar:");
+  const typed=prompt(lines.join("\n"),"");
+  if(normalize(typed||"")!=="vaciar ventas"){showToast("Cancelado");return;}
+
+  const closed=todaySales.length;
+  const cleaned=clearClosedSaleLocationMeta();
+  todaySales=[];
+  persistToday();
+  renderToday();
+  const bits=[];
+  if(closed)bits.push(`${closed} venta${closed===1?"":"s"} cerrada${closed===1?"":"s"}`);
+  if(cleaned.pendingQty)bits.push(`${cleaned.pendingQty} pendiente${cleaned.pendingQty===1?"":"s"} limpiado${cleaned.pendingQty===1?"":"s"}`);
+  showToast((bits.length?bits.join(" · "):"Ventas vaciadas")+" · ubicaciones conservadas");
 });
 
 /* Catálogo embebido de prueba eliminado: el ERP usa exclusivamente el CSV configurado. */
