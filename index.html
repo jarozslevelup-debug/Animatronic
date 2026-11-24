@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
-<title>Registro de ventas · v0.6.6</title>
+<title>Registro de ventas · v0.6.7</title>
 <style>
   :root{
     --bg:#16120f; --bg-elev:#1e1712; --surface:#2a2119; --surface-2:#342a1f;
@@ -242,6 +242,7 @@
   .location-alias-code{font-size:12px;color:var(--text-muted);font-weight:700;}
   .location-alias-row input{padding:8px 9px;font-size:13px;}
   .stand-policy-row{display:grid;grid-template-columns:auto 1fr 58px auto;gap:8px;align-items:center;padding:10px 2px;border-bottom:1px solid var(--border);}
+  .stand-policy-row.asset-only{grid-template-columns:1fr auto;}
   .stand-policy-row:last-child{border-bottom:none;}
   .stand-policy-main{min-width:0;}
   .stand-policy-name{font-size:13px;}
@@ -250,10 +251,19 @@
   .stand-policy-row input[type="checkbox"]{width:18px;height:18px;}
   .charge-policy-toggle{display:flex;align-items:center;justify-content:center;gap:3px;min-width:34px;font-size:15px;color:var(--text-muted);cursor:pointer;}
   .charge-policy-toggle.active{color:var(--accent);}
-  .charge-list-row{padding:10px 2px;border-bottom:1px solid var(--border);}
+  .charge-list-row{padding:10px 8px;border-bottom:1px solid var(--border);border-radius:10px;cursor:pointer;transition:opacity .16s,background .16s;}
   .charge-list-row:last-child{border-bottom:none;}
+  .charge-list-row:hover{background:var(--surface-2);}
+  .charge-list-row.charge-done{opacity:.42;}
   .charge-list-name{font-size:13px;font-weight:700;}
   .charge-list-meta{font-size:11.5px;color:var(--text-muted);margin-top:3px;}
+  .charge-list-state{font-size:11px;font-weight:700;margin-top:4px;color:var(--accent);}
+  .charge-list-row.charge-done .charge-list-state{color:var(--text-muted);}
+  .asset-list{display:flex;flex-direction:column;gap:6px;margin-top:8px;}
+  .asset-row{width:100%;text-align:left;background:var(--surface);border:1px solid var(--border);border-radius:11px;padding:10px 11px;color:var(--text);}
+  .asset-row strong{display:block;font-size:13px;}
+  .asset-row small{display:block;font-size:11px;color:var(--text-muted);margin-top:3px;line-height:1.4;}
+  .asset-tag{display:inline-flex;align-items:center;border:1px solid var(--border);background:var(--surface-2);border-radius:999px;padding:2px 7px;font-size:10px;font-weight:700;margin-left:5px;}
   .location-empty{font-size:12px;color:var(--text-muted);padding:14px 4px;text-align:center;}
   .location-sticky-action{position:sticky;bottom:8px;z-index:4;}
   @media (max-width:390px){.inventory-kpis{grid-template-columns:repeat(3,1fr);}.inventory-kpi:nth-child(4),.inventory-kpi:nth-child(5){grid-column:auto;}}
@@ -431,6 +441,30 @@
       </div>
     </div>
 
+    <div id="businessSection" style="display:none;">
+      <div class="card">
+        <div class="inventory-top">
+          <div><div class="inventory-title">🧰 Inventario del negocio</div><div class="inventory-sub">Artículos marcados con <b>@NEG</b> en Modelo · no aparecen en ventas.</div></div>
+          <button class="btn-secondary" id="btnExitBusiness" type="button" style="padding:8px 11px;font-size:12px;">Salir</button>
+        </div>
+        <div class="search-box"><label for="businessSearchInput">Buscar equipo o artículo</label><input id="businessSearchInput" type="text" autocomplete="off" placeholder="Ej. toldo, mesa, extensión"></div>
+        <div id="businessSummary" class="inventory-sub" style="margin-top:8px;"></div>
+        <div id="businessList" class="asset-list"></div>
+      </div>
+    </div>
+
+    <div id="personalSection" style="display:none;">
+      <div class="card">
+        <div class="inventory-top">
+          <div><div class="inventory-title">🏠 Inventario personal</div><div class="inventory-sub">Artículos marcados con <b>@PER</b> en Modelo · sólo para encontrarlos rápido.</div></div>
+          <button class="btn-secondary" id="btnExitPersonal" type="button" style="padding:8px 11px;font-size:12px;">Salir</button>
+        </div>
+        <div class="search-box"><label for="personalSearchInput">Buscar una cosa</label><input id="personalSearchInput" type="text" autocomplete="off" placeholder="Ej. proyector, herramienta, documento"></div>
+        <div id="personalSummary" class="inventory-sub" style="margin-top:8px;"></div>
+        <div id="personalList" class="asset-list"></div>
+      </div>
+    </div>
+
   </div>
 </div>
 
@@ -446,6 +480,8 @@
     <div class="footer-more-panel" id="footerMorePanel">
       <button class="btn-compact" id="btnModeLocations">📍 Ubicaciones</button>
       <button class="btn-compact" id="btnModeInventory">📦 Inventario</button>
+      <button class="btn-compact" id="btnModeBusiness">🧰 Negocio</button>
+      <button class="btn-compact" id="btnModePersonal">🏠 Personal</button>
       <button class="btn-compact" id="btnCopyDatos">📋 Ventas → Sheets</button>
       <button class="btn-compact" id="btnWhatsapp">💬 WhatsApp</button>
     </div>
@@ -483,6 +519,17 @@
       <div class="field-row"><input type="checkbox" id="quickLocationsToggle"><label for="quickLocationsToggle" style="font-size:14px;color:var(--text);">Mostrar Ubicaciones en menú de ventas</label></div>
       <div class="field-row"><input type="checkbox" id="quickInventoryToggle"><label for="quickInventoryToggle" style="font-size:14px;color:var(--text);">Mostrar Inventario en menú de ventas</label></div>
       <div class="catalog-hint" style="text-align:left;padding:8px 0 0;">Aunque los ocultes aquí, siguen disponibles desde Opciones.</div>
+    </details>
+    <details class="card" style="padding:12px;margin-top:12px;margin-bottom:8px;">
+      <summary style="cursor:pointer;font-weight:700;">🎵 Música</summary>
+      <div class="field-row"><input type="checkbox" id="musicPlayerToggle"><label for="musicPlayerToggle" style="font-size:14px;color:var(--text);">Mostrar reproductor de música</label></div>
+      <div class="catalog-hint" style="text-align:left;padding:8px 0 0;">Usa el mismo reproductor en Halloween, Día de Muertos, Tianguis y TianguisNav. Cargar carpeta, ordenar y demás controles siguen dentro del reproductor.</div>
+    </details>
+    <details class="card" style="padding:12px;margin-top:12px;margin-bottom:8px;">
+      <summary style="cursor:pointer;font-weight:700;">🧰 Inventarios auxiliares</summary>
+      <div class="field-row"><input type="checkbox" id="businessInventoryToggle"><label for="businessInventoryToggle" style="font-size:14px;color:var(--text);">Mostrar Inventario del negocio (@NEG)</label></div>
+      <div class="field-row"><input type="checkbox" id="personalInventoryToggle"><label for="personalInventoryToggle" style="font-size:14px;color:var(--text);">Mostrar Inventario personal (@PER)</label></div>
+      <div class="catalog-hint" style="text-align:left;padding:8px 0 0;">Las etiquetas van en Modelo. Estos artículos siguen en Compartir y Ubicaciones, pero el HTML los excluye de ventas.</div>
     </details>
     <div class="field" style="margin-top:10px;"><label for="tileSizeSelect">Tamaño de foto en catálogo</label>
       <select id="tileSizeSelect">
@@ -549,7 +596,7 @@
       <div id="locationOptionsSummary" class="inventory-config-line">Sin datos de ubicación todavía.</div>
       <button class="btn-primary btn-block" id="btnLocationManager" type="button" style="margin-top:10px;">Entrar a modo Ubicaciones</button>
       <button class="btn-secondary btn-block" id="btnCopyAllLocations" type="button" style="margin-top:7px;">📋 Copiar inventario de ubicaciones completo</button>
-      <div class="catalog-hint" style="text-align:left;padding:8px 0 0;">Compartir sólo necesita una columna <b>Ubicaciones</b>, por ejemplo <code>A3:2/AL04:4/PT01:2</code>. <code>|P=0</code> excluye del puesto y <code>|P=3</code> fija mínimo 3.</div>
+      <div class="catalog-hint" style="text-align:left;padding:8px 0 0;">Compartir sólo necesita una columna <b>Ubicaciones</b>, por ejemplo <code>A3:2/AL04:4/PT01:2</code>. <code>|P=0</code> excluye del puesto, <code>|P=3</code> fija mínimo 3 y <code>|C</code> marca que requiere carga.</div>
     </details>
     <details class="card" id="inventoryOptionsDetails" style="padding:12px;margin-top:14px;margin-bottom:8px;">
       <summary style="cursor:pointer;font-weight:700;">📦 Inventario</summary>
@@ -612,7 +659,7 @@
 </div>
 
 <script>
-/* ERP HTML v0.6.6 · cierre seguro + ubicaciones + política de puesto + mantenimiento de carga */
+/* ERP HTML v0.6.7 · música general + activos @NEG/@PER + control de carga */
 /* ============================================================
    CONFIGURACIÓN
    ============================================================ */
@@ -836,6 +883,8 @@ const LOCATION_REGISTRY_KEY = "rv_location_registry_v1";
 const LOCATION_ALIASES_KEY = "rv_location_aliases_v1";
 const LOCATION_SALE_LEDGER_KEY = "rv_location_sale_ledger_v1";
 const LOCATION_SHORTAGES_KEY = "rv_location_shortages_v1";
+const CHARGE_DONE_KEY = "rv_charge_done_v1";
+const CHARGE_DONE_DAYS = 2;
 
 /* ============================================================
    PIN
@@ -916,6 +965,11 @@ function setupOptionsPanel(){
   const qLoc=document.getElementById("quickLocationsToggle"), qInv=document.getElementById("quickInventoryToggle");
   if(qLoc){qLoc.checked=storageGet("rv_quick_locations",true)!==false;qLoc.addEventListener("change",()=>{storageSet("rv_quick_locations",qLoc.checked);updateQuickModeButtons();});}
   if(qInv){qInv.checked=storageGet("rv_quick_inventory",true)!==false;qInv.addEventListener("change",()=>{storageSet("rv_quick_inventory",qInv.checked);updateQuickModeButtons();});}
+  const musicToggle=document.getElementById("musicPlayerToggle");
+  if(musicToggle){musicToggle.checked=storageGet("rv_show_music_player",true)!==false;musicToggle.addEventListener("change",()=>{storageSet("rv_show_music_player",musicToggle.checked);document.dispatchEvent(new CustomEvent("rv:music-visibility-changed"));});}
+  const businessToggle=document.getElementById("businessInventoryToggle"),personalToggle=document.getElementById("personalInventoryToggle");
+  if(businessToggle){businessToggle.checked=storageGet("rv_show_business_inventory",true)!==false;businessToggle.addEventListener("change",()=>{storageSet("rv_show_business_inventory",businessToggle.checked);updateQuickModeButtons();});}
+  if(personalToggle){personalToggle.checked=storageGet("rv_show_personal_inventory",true)!==false;personalToggle.addEventListener("change",()=>{storageSet("rv_show_personal_inventory",personalToggle.checked);updateQuickModeButtons();});}
   updateQuickModeButtons();
 
   const tileSel = document.getElementById("tileSizeSelect");
@@ -1078,6 +1132,16 @@ function renderFavoritosRow(){
 /* ============================================================
    Filtro de catálogo por puesto (según canal de sesión)
    ============================================================ */
+function hasModelTag(modelo,tag){
+  const raw=String(modelo||"");
+  return new RegExp(`(^|[\s,;|])@${tag}(?=$|[\s,;|])`,`i`).test(raw);
+}
+function productAssetType(p){
+  if(hasModelTag(p?.modelo,"NEG"))return "negocio";
+  if(hasModelTag(p?.modelo,"PER"))return "personal";
+  return "";
+}
+function productosVendibles(){return products.filter(p=>!productAssetType(p));}
 function currentPuestoFiltro(){
   const canal = normalize(document.getElementById("canalSelect").value || "");
   return CONFIG.puestosFiltrados.some(p => normalize(p) === canal) ? canal : null;
@@ -1100,9 +1164,10 @@ function productoDisponibleEnPuesto(modelo, filtro){
   return false;
 }
 function productosVisibles(){
+  const base=productosVendibles();
   const filtro = currentPuestoFiltro();
-  if(!filtro) return products;
-  return products.filter(p => productoDisponibleEnPuesto(p.modelo, filtro));
+  if(!filtro) return base;
+  return base.filter(p => productoDisponibleEnPuesto(p.modelo, filtro));
 }
 
 /* ============================================================
@@ -1206,6 +1271,8 @@ function processCatalogRows(rows,meta={}){
     if(total>0) console.info("Inventario: datos locales reconciliados",syncResolved);
   }
   if(appMode==="inventario")renderInventory();
+  if(appMode==="negocio")renderAssetInventory("negocio",document.getElementById("businessSearchInput")?.value||"");
+  if(appMode==="personal")renderAssetInventory("personal",document.getElementById("personalSearchInput")?.value||"");
 }
 async function loadInventory(options={}){
   if(catalogLoadInProgress)return; catalogLoadInProgress=true;
@@ -1241,9 +1308,11 @@ function setupPullToRefresh(){
 }
 
 function updateQuickModeButtons(){
-  const l=document.getElementById("btnModeLocations"),i=document.getElementById("btnModeInventory");
+  const l=document.getElementById("btnModeLocations"),i=document.getElementById("btnModeInventory"),b=document.getElementById("btnModeBusiness"),p=document.getElementById("btnModePersonal");
   if(l)l.style.display=storageGet("rv_quick_locations",true)!==false?"":"none";
   if(i)i.style.display=storageGet("rv_quick_inventory",true)!==false?"":"none";
+  if(b)b.style.display=storageGet("rv_show_business_inventory",true)!==false?"":"none";
+  if(p)p.style.display=storageGet("rv_show_personal_inventory",true)!==false?"":"none";
 }
 
 /* ============================================================
@@ -1256,6 +1325,12 @@ function setupModeToggles(){
   document.getElementById("searchInputPrecios").addEventListener("input", (e)=> renderPriceGrid(e.target.value));
   document.getElementById("btnModeLocations")?.addEventListener("click",()=>openLocationManager("assign"));
   document.getElementById("btnModeInventory")?.addEventListener("click",()=>openInventoryLogin(false));
+  document.getElementById("btnModeBusiness")?.addEventListener("click",()=>setMode("negocio"));
+  document.getElementById("btnModePersonal")?.addEventListener("click",()=>setMode("personal"));
+  document.getElementById("btnExitBusiness")?.addEventListener("click",()=>setMode("venta"));
+  document.getElementById("btnExitPersonal")?.addEventListener("click",()=>setMode("venta"));
+  document.getElementById("businessSearchInput")?.addEventListener("input",e=>renderAssetInventory("negocio",e.target.value));
+  document.getElementById("personalSearchInput")?.addEventListener("input",e=>renderAssetInventory("personal",e.target.value));
 }
 function setMode(mode){
   appMode = mode;
@@ -1266,11 +1341,15 @@ function setMode(mode){
   document.getElementById("preciosSection").style.display = mode==="precios" ? "block" : "none";
   document.getElementById("inventorySection").style.display = mode==="inventario" ? "block" : "none";
   document.getElementById("locationSection").style.display = mode==="ubicaciones" ? "block" : "none";
+  document.getElementById("businessSection").style.display = mode==="negocio" ? "block" : "none";
+  document.getElementById("personalSection").style.display = mode==="personal" ? "block" : "none";
   document.getElementById("sessionCard").style.display = mode==="venta" ? "block" : "none";
   document.getElementById("footerBar").style.display = (mode==="venta" && products.length) ? "block" : "none";
   if(mode === "precios") renderPriceGrid(document.getElementById("searchInputPrecios").value);
   if(mode === "inventario"){ renderInventory(); setTimeout(()=>document.getElementById("inventorySearchInput")?.focus(),50); }
   if(mode === "ubicaciones"){ renderLocationManager(); setTimeout(()=>document.getElementById("locationSearchInput")?.focus(),50); }
+  if(mode === "negocio"){ renderAssetInventory("negocio",document.getElementById("businessSearchInput")?.value||""); setTimeout(()=>document.getElementById("businessSearchInput")?.focus(),50); }
+  if(mode === "personal"){ renderAssetInventory("personal",document.getElementById("personalSearchInput")?.value||""); setTimeout(()=>document.getElementById("personalSearchInput")?.focus(),50); }
   updateLocationUI();
 }
 
@@ -1457,10 +1536,10 @@ function productListMetaHtml(p,mode="venta"){
 }
 function locationShortageForProduct(p){const key=inventoryProductKey(p);return Object.values(locationShortages()).filter(x=>x?.productKey===key).reduce((a,x)=>a+Number(x.qty||0),0);}
 function locationStats(){
-  if(!locationFeatureConfigured())return {unlocated:0,mismatch:0,replenish:0,restock:0,charge:0,pending:0,configured:false};
-  let unlocated=0,mismatch=0,replenish=0,restock=0,charge=0,pending=Object.keys(locationOverrides()).length;
-  inventoryProducts().forEach(p=>{const st=locationState(p),sum=locationSumState(st),sys=inventorySystemQty(p),su=Number(st.locs.SU||0),target=Math.max(0,Number(st.target)||0),stand=locationZoneQty(p,"stand"),wh=locationZoneQty(p,"warehouse"),saleShort=locationShortageForProduct(p);if(st.charge===true)charge++;if(su>0)unlocated++;if(sum!==sys||saleShort>0)mismatch++;if(su<=0&&target>stand){if(wh>0)replenish++;else restock++;}});
-  return {unlocated,mismatch,replenish,restock,charge,pending,configured:true};
+  if(!locationFeatureConfigured())return {unlocated:0,mismatch:0,replenish:0,restock:0,charge:0,chargePending:0,pending:0,configured:false};
+  let unlocated=0,mismatch=0,replenish=0,restock=0,charge=0,chargePending=0,pending=Object.keys(locationOverrides()).length;
+  managedProducts().forEach(p=>{const st=locationState(p),sum=locationSumState(st),sys=inventorySystemQty(p),su=Number(st.locs.SU||0),target=Math.max(0,Number(st.target)||0),stand=locationZoneQty(p,"stand"),wh=locationZoneQty(p,"warehouse"),saleShort=locationShortageForProduct(p);if(st.charge===true){charge++;if(!chargeDoneActive(p))chargePending++;}if(su>0)unlocated++;if(sum!==sys||saleShort>0)mismatch++;if(!productAssetType(p)&&su<=0&&target>stand){if(wh>0)replenish++;else restock++;}});
+  return {unlocated,mismatch,replenish,restock,charge,chargePending,pending,configured:true};
 }
 function renderLocationAliasEditors(){
   const render=(id,codes)=>{
@@ -1472,7 +1551,7 @@ function renderLocationAliasEditors(){
 }
 function updateLocationUI(){
   const st=locationStats(), sum=document.getElementById("locationOptionsSummary");
-  if(sum)sum.textContent=st.configured?`Sin ubicar ${st.unlocated} · Cargar ${st.charge} · Reponer puesto ${st.replenish} · Por surtir ${st.restock} · Descuadres ${st.mismatch}${st.pending?` · ${st.pending} cambio${st.pending===1?"":"s"} local${st.pending===1?"":"es"}`:""}`:"Falta la columna Ubicaciones en Compartir · el catálogo funciona normal.";
+  if(sum)sum.textContent=st.configured?`Sin ubicar ${st.unlocated} · Cargar ${st.chargePending}${st.charge!==st.chargePending?`/${st.charge}`:""} · Reponer puesto ${st.replenish} · Por surtir ${st.restock} · Descuadres ${st.mismatch}${st.pending?` · ${st.pending} cambio${st.pending===1?"":"s"} local${st.pending===1?"":"es"}`:""}`:"Falta la columna Ubicaciones en Compartir · el catálogo funciona normal.";
   const wh=document.getElementById("warehouseBoxesSummary"),pt=document.getElementById("standBoxesSummary");
   if(wh){const a=locationRegistry().filter(c=>/^AL\d+$/.test(c)).sort(locationCodeSort);wh.textContent=a.length?a.map(c=>locationAlias(c)?`${c} ${locationAlias(c)}`:c).join(" · "):"Sin cajas de almacén creadas todavía.";}
   if(pt){const a=locationRegistry().filter(c=>/^PT\d+$/.test(c)).sort(locationCodeSort);pt.textContent=a.map(c=>locationAlias(c)?`${c} ${locationAlias(c)}`:(c==="PT04"?"PT04 Hielera":c)).join(" · ")||"PT01 · PT02 · PT03 · PT04 Hielera";}
@@ -1530,8 +1609,22 @@ function locationProductStatus(p){
 function saveProductStandTarget(p,target){
   const st=locationState(p);st.target=Math.max(0,Math.floor(Number(target)||0));saveProductLocationState(p,st,"stand-policy");
 }
+function chargeDoneMap(){return storageGet(CHARGE_DONE_KEY,{})||{};}
+function saveChargeDoneMap(v){storageSet(CHARGE_DONE_KEY,v);}
+function chargeDoneActive(p){
+  const m=chargeDoneMap(),rec=m[inventoryProductKey(p)],ts=Number(rec?.at||0);
+  if(!ts)return false;
+  if(Date.now()-ts<CHARGE_DONE_DAYS*86400000)return true;
+  delete m[inventoryProductKey(p)];saveChargeDoneMap(m);return false;
+}
+function toggleChargeDone(p){
+  const m=chargeDoneMap(),k=inventoryProductKey(p);
+  if(chargeDoneActive(p))delete m[k];else m[k]={at:Date.now(),nombre:p.nombre};
+  saveChargeDoneMap(m);updateLocationUI();if(appMode==="ubicaciones")renderLocationManager();
+}
 function saveProductChargePolicy(p,enabled){
   const st=locationState(p);st.charge=enabled===true;saveProductLocationState(p,st,"charge-policy");
+  if(!enabled){const m=chargeDoneMap(),k=inventoryProductKey(p);if(m[k]){delete m[k];saveChargeDoneMap(m);}}
 }
 function setLocationModeControls(html){const el=document.getElementById("locationModeControls");if(el)el.innerHTML=html;}
 function locationSelectOptions(codes,current=""){return codes.map(c=>`<option value="${c}" ${c===current?"selected":""}>${escapeHtmlText(locationManagerLabel(c))}</option>`).join("");}
@@ -1547,7 +1640,7 @@ function ensureLocationTransferPair(){
 function renderLocationManager(){
   if(appMode!=="ubicaciones")return;
   const list=document.getElementById("locationManagerList"),summary=document.getElementById("locationManagerSummary"),btn=document.getElementById("btnTransferSelectedReplenish"),searchBox=document.getElementById("locationSearchBox");if(!list||!summary)return;
-  const ss=locationStats();summary.textContent=ss.configured?`Sin ubicar ${ss.unlocated} · Cargar ${ss.charge} · Reponer ${ss.replenish} · Por surtir ${ss.restock} · Descuadres ${ss.mismatch}`:"Agrega la columna Ubicaciones a Compartir para activar el mini almacén.";
+  const ss=locationStats();summary.textContent=ss.configured?`Sin ubicar ${ss.unlocated} · Cargar ${ss.chargePending}${ss.charge!==ss.chargePending?`/${ss.charge}`:""} · Reponer ${ss.replenish} · Por surtir ${ss.restock} · Descuadres ${ss.mismatch}`:"Agrega la columna Ubicaciones a Compartir para activar el mini almacén.";
   list.innerHTML="";document.getElementById("locationEditor").style.display="none";btn.style.display="none";
   if(!ss.configured){setLocationModeControls('<div class="location-empty">El catálogo sigue funcionando. Cuando Compartir tenga la columna Ubicaciones, aquí podrás empezar a organizar.</div>');return;}
   const q=normalize(document.getElementById("locationSearchInput")?.value||""),words=q.split(/\s+/).filter(Boolean);
@@ -1558,7 +1651,7 @@ function renderLocationManager(){
     document.getElementById("locationAssignDest")?.addEventListener("change",e=>storageSet("rv_location_assign_dest",e.target.value));
     if(searchBox)searchBox.style.display="block";
     if(!q){list.innerHTML=`<div class="location-empty">${ss.unlocated} productos con piezas sin ubicar · escribe producto o modelo para empezar.</div>`;return;}
-    let arr=inventoryProducts().filter(p=>locationProductStatus(p).su>0&&match(p)).slice(0,30);
+    let arr=managedProducts().filter(p=>locationProductStatus(p).su>0&&match(p)).slice(0,30);
     if(!arr.length){list.innerHTML='<div class="location-empty">No encontré productos sin ubicar con esa búsqueda.</div>';return;}
     arr.forEach(p=>{const x=locationProductStatus(p),b=document.createElement("button");b.type="button";b.className="location-result-btn";b.innerHTML='<strong></strong><small></small>';b.querySelector("strong").textContent=p.nombre;b.querySelector("small").textContent=`${p.modelo?p.modelo+" · ":""}ERP ${x.sys} · Sin ubicar ${x.su}`;b.addEventListener("click",()=>{locationSelectedProduct=p;renderLocationEditor();});list.appendChild(b);});
     return;
@@ -1570,7 +1663,7 @@ function renderLocationManager(){
     fo?.addEventListener("change",e=>{storageSet("rv_location_transfer_from",e.target.value);locationSelectedProduct=null;renderLocationManager();});
     td?.addEventListener("change",e=>{storageSet("rv_location_transfer_to",e.target.value);locationSelectedProduct=null;renderLocationManager();});
     if(searchBox)searchBox.style.display="block";const origin=fo?.value||from;
-    let arr=inventoryProducts().filter(p=>Number(locationState(p).locs[origin]||0)>0&&match(p));arr.sort((a,b)=>a.nombre.localeCompare(b.nombre,"es"));arr=arr.slice(0,q?40:30);
+    let arr=managedProducts().filter(p=>Number(locationState(p).locs[origin]||0)>0&&match(p));arr.sort((a,b)=>a.nombre.localeCompare(b.nombre,"es"));arr=arr.slice(0,q?40:30);
     if(!arr.length){list.innerHTML='<div class="location-empty">No hay productos en ese origen'+(q?' con esa búsqueda':'')+'.</div>';return;}
     arr.forEach(p=>{const st=locationState(p),n=Number(st.locs[origin]||0),b=document.createElement("button");b.type="button";b.className="location-result-btn";b.innerHTML='<strong></strong><small></small>';b.querySelector("strong").textContent=p.nombre;b.querySelector("small").textContent=`${p.modelo?p.modelo+" · ":""}${locationManagerLabel(origin)} · ${n} pieza${n===1?"":"s"}`;b.addEventListener("click",()=>{locationSelectedProduct=p;renderLocationEditor();});list.appendChild(b);});
     return;
@@ -1578,33 +1671,43 @@ function renderLocationManager(){
   if(locationManagerFilter==="standpolicy"){
     setLocationModeControls('<div class="inventory-sub">Busca un producto para incluirlo o excluirlo del puesto, cambiar su mínimo y marcar si requiere mantenimiento de carga.</div>');
     if(searchBox)searchBox.style.display="block";
-    const all=inventoryProducts(),excluded=all.filter(p=>locationStandTarget(p)===0).length,chargeCount=all.filter(p=>locationState(p).charge===true).length;
-    if(!q){list.innerHTML=`<div class="location-empty">${all.length-excluded} incluidos · ${excluded} excluidos · 🔋 ${chargeCount} requieren carga · busca producto o modelo para configurar.</div>`;return;}
+    const merchandise=inventoryProducts(),all=managedProducts(),excluded=merchandise.filter(p=>locationStandTarget(p)===0).length,chargeCount=all.filter(p=>locationState(p).charge===true).length;
+    if(!q){list.innerHTML=`<div class="location-empty">${merchandise.length-excluded} incluidos · ${excluded} excluidos · 🔋 ${chargeCount} requieren carga · busca producto o modelo para configurar.</div>`;return;}
     let arr=all.filter(match).slice(0,40);
     if(!arr.length){list.innerHTML='<div class="location-empty">No encontré productos con esa búsqueda.</div>';return;}
     arr.forEach(p=>{
-      const x=locationProductStatus(p),row=document.createElement("div");row.className="stand-policy-row";
-      row.innerHTML=`<input type="checkbox" class="stand-policy-check" title="Incluir en puesto" ${x.target>0?"checked":""}><div class="stand-policy-main"><div class="stand-policy-name"></div><div class="stand-policy-meta"></div></div><input type="number" class="stand-policy-target" inputmode="numeric" min="0" max="99" step="1" value="${x.target}" ${x.target===0?"disabled":""}><label class="charge-policy-toggle ${x.charge?"active":""}" title="Requiere mantenimiento de carga"><input type="checkbox" class="charge-policy-check" ${x.charge?"checked":""}><span>🔋</span></label>`;
-      row.querySelector(".stand-policy-name").textContent=p.nombre;
-      row.querySelector(".stand-policy-meta").textContent=`${p.modelo?p.modelo+" · ":""}${x.target>0?`Puesto mínimo ${x.target}`:"Excluido del puesto"}${x.charge?" · Requiere carga":""}`;
-      const ch=row.querySelector(".stand-policy-check"),inp=row.querySelector(".stand-policy-target"),charge=row.querySelector(".charge-policy-check");
-      ch.addEventListener("change",()=>{const n=ch.checked?Math.max(1,Number(inp.value)||1):0;inp.disabled=!ch.checked;inp.value=n;saveProductStandTarget(p,n);renderLocationManager();});
-      inp.addEventListener("change",()=>{const n=Math.max(0,Math.floor(Number(inp.value)||0));saveProductStandTarget(p,n);ch.checked=n>0;inp.disabled=n===0;renderLocationManager();});
-      charge.addEventListener("change",()=>{saveProductChargePolicy(p,charge.checked);renderLocationManager();});
+      const x=locationProductStatus(p),asset=productAssetType(p),row=document.createElement("div");row.className="stand-policy-row"+(asset?" asset-only":"");
+      if(asset){
+        row.innerHTML=`<div class="stand-policy-main"><div class="stand-policy-name"></div><div class="stand-policy-meta"></div></div><label class="charge-policy-toggle ${x.charge?"active":""}" title="Requiere mantenimiento de carga"><input type="checkbox" class="charge-policy-check" ${x.charge?"checked":""}><span>🔋</span></label>`;
+        row.querySelector(".stand-policy-name").textContent=p.nombre;
+        row.querySelector(".stand-policy-meta").textContent=`${asset==="negocio"?"@NEG · negocio":"@PER · personal"}${x.charge?" · Requiere carga":" · sin mantenimiento de carga"}`;
+        row.querySelector(".charge-policy-check").addEventListener("change",e=>{saveProductChargePolicy(p,e.target.checked);renderLocationManager();});
+      }else{
+        row.innerHTML=`<input type="checkbox" class="stand-policy-check" title="Incluir en puesto" ${x.target>0?"checked":""}><div class="stand-policy-main"><div class="stand-policy-name"></div><div class="stand-policy-meta"></div></div><input type="number" class="stand-policy-target" inputmode="numeric" min="0" max="99" step="1" value="${x.target}" ${x.target===0?"disabled":""}><label class="charge-policy-toggle ${x.charge?"active":""}" title="Requiere mantenimiento de carga"><input type="checkbox" class="charge-policy-check" ${x.charge?"checked":""}><span>🔋</span></label>`;
+        row.querySelector(".stand-policy-name").textContent=p.nombre;
+        row.querySelector(".stand-policy-meta").textContent=`${p.modelo?p.modelo+" · ":""}${x.target>0?`Puesto mínimo ${x.target}`:"Excluido del puesto"}${x.charge?" · Requiere carga":""}`;
+        const ch=row.querySelector(".stand-policy-check"),inp=row.querySelector(".stand-policy-target"),charge=row.querySelector(".charge-policy-check");
+        ch.addEventListener("change",()=>{const n=ch.checked?Math.max(1,Number(inp.value)||1):0;inp.disabled=!ch.checked;inp.value=n;saveProductStandTarget(p,n);renderLocationManager();});
+        inp.addEventListener("change",()=>{const n=Math.max(0,Math.floor(Number(inp.value)||0));saveProductStandTarget(p,n);ch.checked=n>0;inp.disabled=n===0;renderLocationManager();});
+        charge.addEventListener("change",()=>{saveProductChargePolicy(p,charge.checked);renderLocationManager();});
+      }
       list.appendChild(row);
     });
     return;
   }
   if(locationManagerFilter==="charge"){
-    setLocationModeControls('<div class="inventory-sub">Sólo aparecen productos marcados con 🔋 Requiere carga. Se configuran desde la pestaña Puesto.</div>');
+    const pending=managedProducts().filter(p=>locationState(p).charge===true&&!chargeDoneActive(p)).length,totalCharge=managedProducts().filter(p=>locationState(p).charge===true).length;
+    setLocationModeControls(`<div class="inventory-sub">Pendientes <b>${pending}</b> · cargados recientemente <b>${Math.max(0,totalCharge-pending)}</b>. Toca un artículo cuando termines de cargarlo; quedará gris ${CHARGE_DONE_DAYS} días. La marca 🔋 se configura desde Puesto.</div>`);
     if(searchBox)searchBox.style.display="block";
-    let arr=inventoryProducts().filter(p=>locationState(p).charge===true&&match(p)).sort((a,b)=>a.nombre.localeCompare(b.nombre,"es"));
+    let arr=managedProducts().filter(p=>locationState(p).charge===true&&match(p)).sort((a,b)=>{const ad=chargeDoneActive(a)?1:0,bd=chargeDoneActive(b)?1:0;return ad-bd||a.nombre.localeCompare(b.nombre,"es")});
     if(!arr.length){list.innerHTML=`<div class="location-empty">${q?"No encontré productos que requieran carga con esa búsqueda.":"No hay productos marcados para carga todavía."}</div>`;return;}
     arr.slice(0,120).forEach(p=>{
       const row=document.createElement("div"),st=locationState(p),total=inventorySystemQty(p),where=Object.entries(st.locs).filter(([,n])=>Number(n)>0).sort(([a],[b])=>locationCodeSort(a,b)).map(([c,n])=>`${locationManagerLabel(c)} ×${Number(n)}`).join(" · ");
-      row.className="charge-list-row";row.innerHTML='<div class="charge-list-name"></div><div class="charge-list-meta"></div>';
-      row.querySelector(".charge-list-name").textContent=`🔋 ${p.nombre}`;
+      const done=chargeDoneActive(p);row.className="charge-list-row"+(done?" charge-done":"");row.innerHTML='<div class="charge-list-name"></div><div class="charge-list-meta"></div><div class="charge-list-state"></div>';
+      row.querySelector(".charge-list-name").textContent=`${done?"✓":"🔋"} ${p.nombre}`;
       row.querySelector(".charge-list-meta").textContent=`${p.modelo?p.modelo+" · ":""}Total ${total}${where?` · ${where}`:""}`;
+      row.querySelector(".charge-list-state").textContent=done?`Cargado recientemente · toca para deshacer`:`Pendiente · toca cuando quede cargado`;
+      row.addEventListener("click",()=>toggleChargeDone(p));
       list.appendChild(row);
     });
     return;
@@ -1620,7 +1723,7 @@ function renderLocationManager(){
   }
   if(locationManagerFilter==="mismatch"){
     if(searchBox)searchBox.style.display="none";setLocationModeControls('<div class="inventory-sub">Sólo aparecen productos cuya suma de ubicaciones no coincide con la existencia ERP o con una venta provisional.</div>');
-    const arr=inventoryProducts().map(p=>({p,x:locationProductStatus(p)})).filter(o=>o.x.mismatch).slice(0,100);
+    const arr=managedProducts().map(p=>({p,x:locationProductStatus(p)})).filter(o=>o.x.mismatch).slice(0,100);
     if(!arr.length){list.innerHTML='<div class="location-empty">✓ Sin descuadres.</div>';return;}
     arr.forEach(({p,x})=>{const b=document.createElement("button");b.type="button";b.className="location-result-btn";b.innerHTML='<strong></strong><small></small>';b.querySelector("strong").textContent=p.nombre;b.querySelector("small").textContent=`ERP ${x.sys} · ubicaciones ${x.sum}${x.saleShort?` · venta pendiente ${x.saleShort}`:""}`;b.addEventListener("click",()=>{locationSelectedProduct=p;renderLocationEditor();});list.appendChild(b);});
   }
@@ -1646,7 +1749,7 @@ function transferFromZone(p,zone,dest,qty){
 function transferSelectedReplenish(){
   const dest=normalizeLocationCode(document.getElementById("locationReplenishDest")?.value||"");if(!dest){showToast("Crea o elige una caja del puesto");return;}const checked=[...document.querySelectorAll(".loc-replenish-check:checked")];if(!checked.length){showToast("Selecciona productos");return;}let moved=0,short=0;checked.forEach(ch=>{const p=products.find(x=>inventoryProductKey(x)===ch.dataset.key);if(!p)return;const x=locationProductStatus(p),r=transferFromZone(p,"warehouse",dest,Math.min(x.need,x.wh));moved+=r.moved;short+=r.left;});renderLocationManager();showToast(`Transferidas ${moved} pieza${moved===1?"":"s"}${short?` · faltaron ${short}`:""}`);
 }
-function buildAllLocationsTsv(){return [["Producto","Ubicaciones"],...inventoryProducts().slice().sort((a,b)=>a.nombre.localeCompare(b.nombre,"es")).map(p=>[p.nombre,encodeLocationState(locationState(p))])].map(r=>r.join("\t")).join("\n");}
+function buildAllLocationsTsv(){return [["Producto","Ubicaciones"],...managedProducts().slice().sort((a,b)=>a.nombre.localeCompare(b.nombre,"es")).map(p=>[p.nombre,encodeLocationState(locationState(p))])].map(r=>r.join("\t")).join("\n");}
 async function copyAllLocations(){const ok=await copyText(buildAllLocationsTsv());showToast(ok?"Ubicaciones completas copiadas":"No se pudo copiar");}
 function locationSaleLedger(){return storageGet(LOCATION_SALE_LEDGER_KEY,{})||{};}
 function saveLocationSaleLedger(v){storageSet(LOCATION_SALE_LEDGER_KEY,v);}
@@ -1702,7 +1805,17 @@ function saveInventoryDebtEdits(v){ storageSet(inventoryDebtStorageKey(),v); }
 function inventoryDebtFieldEnabled(){ return storageGet("rv_inventory_show_debt",false)===true; }
 function inventoryProductKey(p){ return normalize(p?.nombre||""); }
 function inventorySystemQty(p){ const n=parseNumberFlexible(p?.cantidad); return Number.isFinite(n)?n:0; }
-function inventoryProducts(){ return products.filter(p=>inventorySystemQty(p)>0); }
+function managedProducts(){return products.filter(p=>inventorySystemQty(p)>0);}
+function inventoryProducts(){ return managedProducts().filter(p=>!productAssetType(p)); }
+function assetProducts(type){return managedProducts().filter(p=>productAssetType(p)===type);}
+function cleanAssetModel(modelo){return String(modelo||"").replace(/(^|[\s,;|])@(NEG|PER)(?=$|[\s,;|])/ig," ").replace(/\s+/g," ").trim();}
+function renderAssetInventory(type,query=""){
+  const isBusiness=type==="negocio",list=document.getElementById(isBusiness?"businessList":"personalList"),summary=document.getElementById(isBusiness?"businessSummary":"personalSummary");if(!list||!summary)return;
+  const q=normalize(query),words=q.split(/\s+/).filter(Boolean),all=assetProducts(type),arr=all.filter(p=>!words.length||words.every(w=>normalize(`${p.nombre} ${p.modelo||""}`).includes(w))).sort((a,b)=>a.nombre.localeCompare(b.nombre,"es"));
+  summary.textContent=`${all.length} artículo${all.length===1?"":"s"}${q?` · ${arr.length} coincidencia${arr.length===1?"":"s"}`:""}`;list.innerHTML="";
+  if(!arr.length){list.innerHTML=`<div class="location-empty">${q?"No encontré coincidencias.":`No hay artículos ${isBusiness?"@NEG":"@PER"} todavía.`}</div>`;return;}
+  arr.slice(0,150).forEach(p=>{const st=locationState(p),where=Object.entries(st.locs).filter(([,n])=>Number(n)>0).sort(([a],[b])=>locationCodeSort(a,b)).map(([c,n])=>`${locationManagerLabel(c)} ×${Number(n)}`).join(" · "),m=cleanAssetModel(p.modelo),b=document.createElement("button");b.type="button";b.className="asset-row";b.innerHTML='<strong></strong><small></small>';b.querySelector("strong").textContent=p.nombre;b.querySelector("small").textContent=`Total ${inventorySystemQty(p)}${where?` · ${where}`:" · sin ubicación"}${m?` · ${m}`:""}${locationState(p).charge===true?" · 🔋":""}`;b.addEventListener("click",()=>showToast(where?where:"Sin ubicación asignada"));list.appendChild(b);});
+}
 
 function parseInventoryDate(raw){
   const s=String(raw??"").trim(); if(!s)return "";
@@ -2824,6 +2937,6 @@ boot();
 <script src="folios_v2.js?v=2"></script>
 <script src="qrcode_hw.js?v=1"></script>
 <script src="halloween.js?v=0.4.8"></script>
-<script type="module" src="seasonal_controls.js?v=2"></script>
+<script type="module" src="seasonal_controls.js?v=3"></script>
 </body>
 </html>
